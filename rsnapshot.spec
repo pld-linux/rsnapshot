@@ -8,6 +8,7 @@ Group:		Daemons
 Source0:	 http://rsnapshot.scubaninja.com/downloads/%{name}-%{version}.tar.gz
 # Source0-md5:	a63c052d4c4c601222f0a3de6d720b46
 Requires:	perl-base
+Requires:	rsync
 BuildRoot:	%{tmpdir}/%{name}-%{version}-root-%(id -u -n)
 
 %description
@@ -21,13 +22,17 @@ w oparciu o rsynca.
 %setup  -q
 
 %build
-%configure
+%configure \
+	RSYNC=rsync
 %{__make}
 
 %install
 rm -rf $RPM_BUILD_ROOT
-%makeinstall
-mv $RPM_BUILD_ROOT/%{_sysconfdir}/%{name}.conf{.default,}
+
+%{__make} install \
+	DESTDIR=$RPM_BUILD_ROOT
+
+mv -f $RPM_BUILD_ROOT%{_sysconfdir}/%{name}.conf{.default,}
 
 %clean
 rm -rf $RPM_BUILD_ROOT
