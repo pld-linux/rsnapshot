@@ -1,11 +1,11 @@
 Summary:	Program for efficient remote updates of backup sets
 Name:		rsnapshot
-Version:	1.0.1
+Version:	1.0.2
 Release:	1
 License:	GPL
 Group:		Daemons
 Source0:	 http://rsnapshot.scubaninja.com/downloads/%{name}-%{version}.tar.gz
-# Source0-md5:	a22c38978107efdcfd044252a2253100
+# Source0-md5:	d30a2abf6b58416b7258a80f50a78c59
 Requires: perl
 BuildRoot:	%{tmpdir}/%{name}-%{version}-root-%(id -u -n)
 
