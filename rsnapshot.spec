@@ -5,7 +5,7 @@ Version:	1.1.6
 Release:	1
 License:	GPL
 Group:		Daemons
-Source0:	 http://rsnapshot.scubaninja.com/downloads/%{name}-%{version}.tar.gz
+Source0:	http://www.rsnapshot.org/downloads/%{name}-%{version}.tar.gz
 # Source0-md5:	865b68d3c952812d9a3fc982d514ccfa
 URL:		http://www.rsnapshot.org/
 Requires:	perl-base
