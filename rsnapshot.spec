@@ -2,8 +2,8 @@ Summary:	Program for efficient remote updates of backup sets
 Summary(pl):	Program do wydajnego zdalnego uaktualniania zbiorów kopii zapasowych
 Name:		rsnapshot
 Version:	1.2.3
-Release:	1
-License:	GPL
+Release:	1 
+License:	GPL v2
 Group:		Daemons
 Source0:	http://www.rsnapshot.org/downloads/%{name}-%{version}.tar.gz
 # Source0-md5:	b27d90886b25d0e160b267f98c605aec
@@ -40,7 +40,7 @@ rm -rf $RPM_BUILD_ROOT
 
 %files
 %defattr(644,root,root,755)
-%doc README AUTHORS TODO ChangeLog
+%doc AUTHORS ChangeLog README TODO
 %attr(755,root,root) %{_bindir}/*
+%config(noreplace) %verify(not md5 mtime size) %{_sysconfdir}/*
 %{_mandir}/man1/*
-%config(noreplace) %verify(not size mtime md5) %{_sysconfdir}/*
