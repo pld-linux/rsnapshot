@@ -8,7 +8,7 @@ Group:		Daemons
 Source0:	http://www.rsnapshot.org/downloads/%{name}-%{version}.tar.gz
 # Source0-md5:	b27d90886b25d0e160b267f98c605aec
 URL:		http://www.rsnapshot.org/
-Requires:	perl-base
+Requires:	perl
 Requires:	rsync
 BuildRoot:	%{tmpdir}/%{name}-%{version}-root-%(id -u -n)
 
