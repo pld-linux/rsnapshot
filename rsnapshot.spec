@@ -1,5 +1,5 @@
 Summary:	Program for efficient remote updates of backup sets
-Summary(pl):	Program do wydajnego zdalnego uaktualniania zbiorów kopii zapasowych
+Summary(pl.UTF-8):   Program do wydajnego zdalnego uaktualniania zbiorÃ³w kopii zapasowych
 Name:		rsnapshot
 Version:	1.2.3
 Release:	1 
@@ -15,7 +15,7 @@ BuildRoot:	%{tmpdir}/%{name}-%{version}-root-%(id -u -n)
 %description
 rsnapshot is an efficient backup program built on rsync.
 
-%description -l pl
+%description -l pl.UTF-8
 rsnapshot to wydajny program do wykonywania kopii zapasowych stworzony
 w oparciu o rsynca.
 
