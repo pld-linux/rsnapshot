@@ -1,5 +1,5 @@
 Summary:	Program for efficient remote updates of backup sets
-Summary(pl.UTF-8):   Program do wydajnego zdalnego uaktualniania zbiorów kopii zapasowych
+Summary(pl.UTF-8):	Program do wydajnego zdalnego uaktualniania zbiorów kopii zapasowych
 Name:		rsnapshot
 Version:	1.2.3
 Release:	1 
