@@ -9,6 +9,7 @@ Source0:	http://www.rsnapshot.org/downloads/%{name}-%{version}.tar.gz
 # Source0-md5:	8487514517e78fe1cd1143ca67cb4b62
 URL:		http://www.rsnapshot.org/
 Requires:	perl-base
+Requires:	perl-modules
 Requires:	rsync
 BuildRoot:	%{tmpdir}/%{name}-%{version}-root-%(id -u -n)
 
