@@ -1,0 +1,222 @@
+From: Guillaume Delacour <gui@iroqwa.org>
+Subject: Add missing "=back" to fix pod2man error.
+Origin: upstream, http://rsnapshot.cvs.sourceforge.net/viewvc/rsnapshot/rsnapshot/rsnapshot-program.pl?r1=1.408&r2=1.409&view=patch
+
+--- a/rsnapshot-program.pl
++++ b/rsnapshot-program.pl
+@@ -6716,6 +6716,8 @@
+ 
+ =back
+ 
++=back
++
+ =head1 USAGE
+ 
+ B<rsnapshot> can be used by any user, but for system-wide backups
+From: Guillaume Delacour <gui@iroqwa.org>
+Subject: Fix some error on upstream example shell script utils/random_file_verify.sh.
+Forwarded: no
+
+--- a/utils/random_file_verify.sh
++++ b/utils/random_file_verify.sh
+@@ -32,10 +32,10 @@
+ 
+ if [ $? -eq 0 ]
+ then
+-  echo "SUCCESS:  Randomly generated test file created." >>
++  echo "SUCCESS:  Randomly generated test file created." >>\
+ /var/log/localbackup.log
+ else
+-  echo "FAILED:  Randomly generated test file not created." >>
++  echo "FAILED:  Randomly generated test file not created." >>\
+ /var/log/localbackup.log
+   msubject="Local Backup has ERRORS!"
+ fi
+@@ -60,10 +60,10 @@
+ 
+ if [ $? -eq 0 ]
+ then
+-  echo "PASSED:  Randomly generated test file is the same." >>
++  echo "PASSED:  Randomly generated test file is the same." >>\
+ /var/log/localbackup.log
+ else
+-  echo "FAILED:  Randomly generated test file differs." >>
++  echo "FAILED:  Randomly generated test file differs." >>\
+ /var/log/localbackup.log
+   msubject="Local Backup has ERRORS!"
+ fi
+From: Guillaume Delacour <gui@iroqwa.org>
+Subject: Strip backtick before inclusion
+Origin: upstream, http://rsnapshot.cvs.sourceforge.net/viewvc/rsnapshot/rsnapshot/rsnapshot-program.pl?r1=1.405&r2=1.406&view=patch
+Bug-Debian: http://bugs.debian.org/614167
+
+--- a/rsnapshot-program.pl	2008/10/13 21:00:35	1.405
++++ b/rsnapshot-program.pl	2008/12/04 16:02:09	1.406
+@@ -504,8 +504,8 @@
+ 	# open the config file
+ 	my $config_file = shift() || $config_file;
+ 	my $CONFIG;
+-	if($config_file =~ /^`.*`$/) {
+-	    open($CONFIG, "$config_file|") ||
++	if($config_file =~ /^`(.*)`$/) {
++	    open($CONFIG, "$1|") ||
+ 	        bail("Couldn't execute \"$config_file\" to get config information\nAre you sure you have permission?");
+ 	} else {
+ 	    $CONFIG = IO::File->new($config_file)
+From: Guillaume Delacour <gui@iroqwa.org>
+Subject: Fix space in path problem
+Origin: upstream, http://rsnapshot.cvs.sourceforge.net/viewvc/rsnapshot/rsnapshot/rsnapshot-program.pl?r1=1.413&r2=1.414&view=patch
+Bug-Debian: http://bugs.debian.org/662636
+
+--- a/rsnapshot-program.pl	2009/03/09 05:38:23	1.413
++++ b/rsnapshot-program.pl	2009/03/27 21:54:02	1.414
+@@ -3692,8 +3692,7 @@
+ 	$result = 1;
+ 	if (0 == $test) {
+ 		while ($tryCount < $rsync_numtries && $result !=0) {
+-			# join is Michael Ashley's fix for some filter/space problems		
+-			$result = system(join(' ', @cmd_stack));
++			$result = system(@cmd_stack);
+ 			$tryCount += 1;
+ 		}
+ 
+@@ -4728,8 +4728,7 @@
+ 	print_cmd(@cmd_stack);
+ 	
+ 	if (0 == $test) {
+-                # join is Michael Ashley's fix for some filter/space problems
+-		my $result = system(join(' ', @cmd_stack));
++		my $result = system(@cmd_stack);
+ 		
+ 		if ($result != 0) {
+ 			# bitmask return value
+From: Guillaume Delacour <gui@iroqwa.org>
+Subject: Prepare lvm snapshot configuration
+Bug-Ubuntu: https://bugs.launchpad.net/ubuntu/+source/rsnapshot/+bug/713464
+Forwarded: no
+
+--- a/rsnapshot.conf.default.in
++++ b/rsnapshot.conf.default.in
+@@ -80,6 +80,14 @@
+ #
+ #cmd_postexec	/path/to/postexec/script
+ 
++# Paths to lvcreate, lvremove, mount and umount commands, for use with
++# Linux LVMs.
++#
++#linux_lvm_cmd_lvcreate	@CMD_LVCREATE@
++#linux_lvm_cmd_lvremove	@CMD_LVREMOVE@
++#linux_lvm_cmd_mount	@CMD_MOUNT@
++#linux_lvm_cmd_umount	@CMD_UMOUNT@
++
+ #########################################
+ #           BACKUP INTERVALS            #
+ # Must be unique and in ascending order #
+@@ -188,6 +196,26 @@
+ #
+ #rsync_numtries 0
+ 
++# LVM parameters. Used to backup with creating lvm snapshot before backup
++# and removing it after. This should ensure consistency of data in some special
++# cases
++#
++# LVM snapshot(s) size (lvcreate --size option).
++#
++#linux_lvm_snapshotsize	100M
++
++# Name to be used when creating the LVM logical volume snapshot(s).
++#
++#linux_lvm_snapshotname	rsnapshot
++
++# Path to the LVM Volume Groups.
++#
++#linux_lvm_vgpath	/dev
++
++# Mount point to use to temporarily mount the snapshot(s).
++#
++#linux_lvm_mountpath	/path/to/mount/lvm/snapshot/during/backup
++
+ ###############################
+ ### BACKUP POINTS / SCRIPTS ###
+ ###############################
+@@ -201,6 +229,8 @@
+ #backup	/home/foo/My Documents/		localhost/
+ #backup	/foo/bar/	localhost/	one_fs=1, rsync_short_args=-urltvpog
+ #backup_script	/usr/local/bin/backup_pgsql.sh	localhost/postgres/
++# You must set linux_lvm_* parameters below before using lvm snapshots
++#backup	lvm://vg0/xen-home/	lvm-vg0/xen-home/
+ 
+ # EXAMPLE.COM
+ #backup_script	/bin/date "+ backup of example.com started at %c"	unused1
+--- a/configure.ac
++++ b/configure.ac
+@@ -176,6 +176,37 @@
+ AC_SUBST(CMD_SSH, "cmd_ssh	$SSH")
+ 
+ 
++dnl
++dnl LVM COMMANDS CHECK (optional programs)
++dnl
++dnl lvcreate
++AC_PATH_PROG(LVCREATE, lvcreate, no)
++if test "$LVCREATE" = "no"; then
++	LVCREATE=/path/to/lvcreate
++fi
++AC_SUBST(CMD_LVCREATE, "$LVCREATE")
++
++dnl lvremove
++AC_PATH_PROG(LVREMOVE, lvremove, no)
++if test "$LVREMOVE" = "no"; then
++	LVREMOVE=/path/to/lvremove
++fi
++AC_SUBST(CMD_LVREMOVE, "$LVREMOVE")
++
++dnl mount
++AC_PATH_PROG(MOUNT, mount, no)
++if test "$MOUNT" = "no"; then
++	MOUNT=/path/to/mount
++fi
++AC_SUBST(CMD_MOUNT, "$MOUNT")
++
++dnl umount
++AC_PATH_PROG(UMOUNT, umount, no)
++if test "$UMOUNT" = "no"; then
++	UMOUNT=/path/to/umount
++fi
++AC_SUBST(CMD_UMOUNT, "$UMOUNT")
++
+ 
+ dnl
+ dnl LOGGER CHECK (optional program)
+From: Guillaume Delacour <gui@iroqwa.org>
+Subject: Use is_valid_script() for checking include_conf `backticks`
+Origin: upstream, http://rsnapshot.cvs.sourceforge.net/viewvc/rsnapshot/rsnapshot/rsnapshot-program.pl?r1=1.400&r2=1.401&view=patch
+Bug-Debian: http://bugs.debian.org/653285
+
+--- a/rsnapshot-program.pl	2008/09/05 10:55:56	1.400
++++ b/rsnapshot-program.pl	2008/09/05 11:02:35	1.401
+@@ -568,7 +568,7 @@
+ 			$value =~ /^`(.*)`$/;
+ 			if(
+ 			    (defined($value) && -f $value && -r $value) ||
+-			    (defined($1) && -x $1)
++			    (defined($1) && is_valid_script($1))
+ 			) {
+ 				$line_syntax_ok = 1;
+ 				parse_config_file($value);
+From: Nicolas Courtel <courtel@cena.fr>
+Subject: WARNING prefix missing in some warning messages
+Bug-Debian: http://bugs.debian.org/688790
+Forwarded: https://sourceforge.net/p/rsnapshot/patches/14/
+
+--- a/rsnapshot-program.pl
++++ b/rsnapshot-program.pl
+@@ -2028,7 +2028,7 @@
+ 	}
+ 	
+ 	# write to log
+-	log_msg($str, $level);
++	log_warn($str, $level);
+ }
+ 
+ # accepts string, and level
