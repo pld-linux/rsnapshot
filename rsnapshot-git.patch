@@ -1,0 +1,3143 @@
+diff --git a/AUTHORS b/AUTHORS
+index 418569f..c60b2e5 100644
+--- a/AUTHORS
++++ b/AUTHORS
+@@ -87,3 +87,5 @@ David Grant <davidgrant@gmail.com>
+ Matt McCutchen <matt@mattmccutchen.net>
+     - Wrote rsnapshot-copy (to copy snapshot roots using rsync --link-dest)
+ 
++Imran Chaudhry <ichaudhry@gmail.com>
++    - added -H to rsnapshot-diff
+diff --git a/ChangeLog b/ChangeLog
+index a2e01d6..28b3bf7 100644
+--- a/ChangeLog
++++ b/ChangeLog
+@@ -3,6 +3,31 @@ rsnapshot changelog
+ http://www.rsnapshot.org/
+ ------------------------------------------------------------------------------
+ 
++VERSION 1.3.x
++------------------------------------------------------------------------------
++- Print rnspashot's PID when logging to syslog, instead of the logger's PID.
++- make script uses pod2man instead of /usr/bin/pod2man
++- rsnapshot-diff: Fixed removed files reported as addition (+ mark)
++- check for SIGPIPE, mainly in case cron fails when trying to mail
++  (this is probably why rsnapshot dies mysteriously if it outputs when
++  called by cron on a system which does not have mail working).
++- add test case for -t showing --link-dest when there is only one snapshot
++- if gnu_cp_al fails, test out a simple cp -al command before suggesting
++  that the cp does not support -al.
++- When snapshot_root does not exist, check existence of parent directories.
++- include_conf `command` now strips backticks before execution (bug fix
++  based on suggestion from David Osborn).
++- Ignore extraneous output from lvremove command.  (patch by Tim Connors) 
++- Update current maintainer status in Authors section of man page.
++  (David Cantrell stepped down between 1.3.0 and 1.3.1.) 
++- Remove some old (1.1.x -> 1.2.0) upgrade notices from man page.
++- Allow linux_lvm_cmd_* in config file to have options also.
++- Allow `backticks with options` in include_conf.
++- Fix inaccurate omission of --link-dest in test-mode output:
++  http://sourceforge.net/mailarchive/forum.php?thread_name=4986E5A4.3090002%40Media-Brokers.com&forum_name=rsnapshot-discuss
++- rsnapshot-diff: Add -s option to show size of each file.
++  http://sourceforge.net/mailarchive/forum.php?thread_name=20080128082704.03568f0c%40szpak&forum_name=rsnapshot-discuss
++
+ VERSION 1.3.1  (Aug 31 2008)
+ ------------------------------------------------------------------------------
+ - Fix help message mixup in lines between -c and -t.
+@@ -12,7 +37,7 @@ VERSION 1.3.1  (Aug 31 2008)
+ - Include rsnapshot-copy script written by Matt McCutchen.
+ - Allow `backticks` in include_conf.
+ - Apply fix-sync_first-rollback.diff patch from Matt McCutchen (02 Apr 2008).
+-- hopefully fix bug with link_dest not being used on second and later backups 
++- Fix bug with link_dest not being used on second and later backups 
+   when you have link_dest 1 and sync_first 1. (Ignore $sync_dir_was_present)
+ - Patch from Adam Greenbaum to allow passing of ssh arguments correctly.
+ - David Grant added rsync_numtries to rsnapshot.conf.
+diff --git a/Makefile.am b/Makefile.am
+index b57e439..cd4ca72 100644
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -1,7 +1,7 @@
+-# $Id: Makefile.am,v 1.88 2008/06/28 02:02:14 djk20 Exp $ #
++# $Id: Makefile.am,v 1.91 2009/11/21 06:57:00 djk20 Exp $ #
+ 
+ # rsnapshot version
+-VERSION = 1.3.1
++VERSION = 1.3.1.1
+ 
+ # Where RPM files are built on this system
+ RPM_BASE_DIR = /usr/src/redhat
+@@ -16,11 +16,11 @@ doc: man html
+ man: $(man_MANS)
+ rsnapshot.1 : rsnapshot
+ 	@# perl 5.8 for this
+-	/usr/bin/pod2man -c '' -n 'rsnapshot' -r '' rsnapshot > rsnapshot.1
++	pod2man -c '' -n 'rsnapshot' -r '' rsnapshot > rsnapshot.1
+ 	
+ rsnapshot-diff.1 : rsnapshot-diff
+ 	@# perl 5.8 for this
+-	/usr/bin/pod2man -c '' -n 'rsnapshot-diff' -r '' rsnapshot-diff > rsnapshot-diff.1
++	pod2man -c '' -n 'rsnapshot-diff' -r '' rsnapshot-diff > rsnapshot-diff.1
+ 	
+ html: rsnapshot.html
+ rsnapshot.html: rsnapshot
+@@ -127,7 +127,10 @@ rsnapshot-$(VERSION).tar.gz: $(man_MANS) rpm-patch Makefile $(bin_SCRIPTS) $(sys
+ 	rm -rf rsnapshot-$(VERSION)/
+ 	@echo
+ 
+-test: rsnapshot
++# If you lack GNU make, you could use "test_cases = t/*.t" as an approximation.
++test_cases_in := $(wildcard t/*.t.in)
++test_cases := $(test_cases_in:%.in=%)
++test: rsnapshot $(test_cases)
+ 	@PERL@ -MTest::Harness -e 'runtests(glob "t/*.t")';
+ 
+ bin_SCRIPTS = rsnapshot rsnapshot-diff
+diff --git a/Makefile.in b/Makefile.in
+index d1c6a2b..4b41ef2 100644
+--- a/Makefile.in
++++ b/Makefile.in
+@@ -14,7 +14,7 @@
+ 
+ @SET_MAKE@
+ 
+-# $Id: Makefile.in,v 1.109 2008/08/31 10:48:47 djk20 Exp $ #
++# $Id: Makefile.in,v 1.111 2009/03/27 21:36:34 djk20 Exp $ #
+ 
+ 
+ srcdir = @srcdir@
+@@ -45,12 +45,14 @@ DIST_COMMON = README $(am__configure_deps) $(srcdir)/Makefile.am \
+ 	$(top_srcdir)/t/configtest.t.in $(top_srcdir)/t/gnu_cp.t.in \
+ 	$(top_srcdir)/t/relative_delete_bugfix.t.in \
+ 	$(top_srcdir)/t/rsync.t.in \
++	$(top_srcdir)/t/snapshot_root_with_space.t.in \
+ 	$(top_srcdir)/t/support/etc/configtest.conf.in \
+ 	$(top_srcdir)/t/support/etc/gnu_cp.conf.in \
+ 	$(top_srcdir)/t/support/etc/relative_delete_bugfix.conf.in \
+-	$(top_srcdir)/t/support/etc/rsync.conf.in AUTHORS COPYING \
+-	ChangeLog INSTALL NEWS TODO config.guess config.sub install-sh \
+-	missing mkinstalldirs
++	$(top_srcdir)/t/support/etc/rsync.conf.in \
++	$(top_srcdir)/t/support/etc/snapshot_root_with_space.conf.in \
++	AUTHORS COPYING ChangeLog INSTALL NEWS TODO config.guess \
++	config.sub install-sh missing mkinstalldirs
+ ACLOCAL_M4 = $(top_srcdir)/aclocal.m4
+ am__aclocal_m4_deps = $(top_srcdir)/configure.ac
+ am__configure_deps = $(am__aclocal_m4_deps) $(CONFIGURE_DEPENDENCIES) \
+@@ -61,8 +63,10 @@ mkinstalldirs = $(SHELL) $(top_srcdir)/mkinstalldirs
+ CONFIG_CLEAN_FILES = rsnapshot rsnapshot-diff rsnapshot.conf.default \
+ 	t/support/etc/configtest.conf t/support/etc/rsync.conf \
+ 	t/support/etc/gnu_cp.conf \
+-	t/support/etc/relative_delete_bugfix.conf t/configtest.t \
+-	t/rsync.t t/gnu_cp.t t/relative_delete_bugfix.t
++	t/support/etc/relative_delete_bugfix.conf \
++	t/support/etc/snapshot_root_with_space.conf t/configtest.t \
++	t/rsync.t t/gnu_cp.t t/relative_delete_bugfix.t \
++	t/snapshot_root_with_space.t
+ am__installdirs = "$(DESTDIR)$(bindir)" "$(DESTDIR)$(man1dir)" \
+ 	"$(DESTDIR)$(sysconfdir)"
+ binSCRIPT_INSTALL = $(INSTALL_SCRIPT)
+@@ -141,7 +145,7 @@ TEST_RM = @TEST_RM@
+ TEST_SSH = @TEST_SSH@
+ 
+ # rsnapshot version
+-VERSION = 1.3.1
++VERSION = 1.3.1.1
+ ac_ct_STRIP = @ac_ct_STRIP@
+ am__leading_dot = @am__leading_dot@
+ am__tar = @am__tar@
+@@ -225,6 +229,8 @@ t/support/etc/gnu_cp.conf: $(top_builddir)/config.status $(top_srcdir)/t/support
+ 	cd $(top_builddir) && $(SHELL) ./config.status $@
+ t/support/etc/relative_delete_bugfix.conf: $(top_builddir)/config.status $(top_srcdir)/t/support/etc/relative_delete_bugfix.conf.in
+ 	cd $(top_builddir) && $(SHELL) ./config.status $@
++t/support/etc/snapshot_root_with_space.conf: $(top_builddir)/config.status $(top_srcdir)/t/support/etc/snapshot_root_with_space.conf.in
++	cd $(top_builddir) && $(SHELL) ./config.status $@
+ t/configtest.t: $(top_builddir)/config.status $(top_srcdir)/t/configtest.t.in
+ 	cd $(top_builddir) && $(SHELL) ./config.status $@
+ t/rsync.t: $(top_builddir)/config.status $(top_srcdir)/t/rsync.t.in
+@@ -233,6 +239,8 @@ t/gnu_cp.t: $(top_builddir)/config.status $(top_srcdir)/t/gnu_cp.t.in
+ 	cd $(top_builddir) && $(SHELL) ./config.status $@
+ t/relative_delete_bugfix.t: $(top_builddir)/config.status $(top_srcdir)/t/relative_delete_bugfix.t.in
+ 	cd $(top_builddir) && $(SHELL) ./config.status $@
++t/snapshot_root_with_space.t: $(top_builddir)/config.status $(top_srcdir)/t/snapshot_root_with_space.t.in
++	cd $(top_builddir) && $(SHELL) ./config.status $@
+ install-binSCRIPTS: $(bin_SCRIPTS)
+ 	@$(NORMAL_INSTALL)
+ 	test -z "$(bindir)" || $(mkdir_p) "$(DESTDIR)$(bindir)"
+@@ -549,11 +557,11 @@ doc: man html
+ man: $(man_MANS)
+ rsnapshot.1 : rsnapshot
+ 	@# perl 5.8 for this
+-	/usr/bin/pod2man -c '' -n 'rsnapshot' -r '' rsnapshot > rsnapshot.1
++	pod2man -c '' -n 'rsnapshot' -r '' rsnapshot > rsnapshot.1
+ 
+ rsnapshot-diff.1 : rsnapshot-diff
+ 	@# perl 5.8 for this
+-	/usr/bin/pod2man -c '' -n 'rsnapshot-diff' -r '' rsnapshot-diff > rsnapshot-diff.1
++	pod2man -c '' -n 'rsnapshot-diff' -r '' rsnapshot-diff > rsnapshot-diff.1
+ 
+ html: rsnapshot.html
+ rsnapshot.html: rsnapshot
+diff --git a/NOTES/add_test_case b/NOTES/add_test_case
+new file mode 100644
+index 0000000..b6fd8c0
+--- /dev/null
++++ b/NOTES/add_test_case
+@@ -0,0 +1,32 @@
++These are some notes on how to add a new test case (XYZ) into rsnapshot.
++The contents of the test script are not covered here (yet).
++
++
++vi t/XYZ.t.in
++# Create test script
++
++vi t/support/etc/XYZ.conf.in
++# Create rsnapshot.conf for test (if required)
++
++cvs add t/XYZ.t.in t/support/etc/XYZ.conf.in
++
++vi configure.ac
++# Add
++>> AC_CONFIG_FILES(t/support/etc/XYZ.conf:t/support/etc/XYZ.conf.in)
++# and
++>> AC_CONFIG_FILES(t/XYZ.t:t/XYZ.t.in)
++
++./configure
++# To generate t/XYZ.t from t/XYZ.t.in etc
++# Note that starting 2009-11-21, "make test" will automatically generate
++# t/ABC.t from t/ABC.t.in, if needed.  This means you should not need to
++# run ./configure.
++
++make test
++# Verify that test works as expected - if not use vi and make test.
++
++cvs commit t/XYZ.t.in t/support/etc/XYZ.conf.in configure.ac
++# These files were directly updated
++
++cvs commit configure Makefile.in
++# These files would have been regenerated
+diff --git a/README b/README
+index 390736b..30624aa 100644
+--- a/README
++++ b/README
+@@ -7,6 +7,8 @@ and you are welcome to redistribute it under certain conditions.
+ See the GNU General Public Licence for details.
+ 
+ For installation or upgrade instructions, read INSTALL
++
++If you want to work on improving rsnapshot, please see README.developers
+ ------------------------------------------------------------------------------
+ 
+ rsnapshot is a filesystem snapshot utility based on rsync.
+@@ -16,14 +18,16 @@ and remote machines over ssh. The code makes extensive use of hard links
+ whenever possible, to greatly reduce the disk space required.
+ 
+ It is written entirely in perl with no module dependencies, and has been
+-tested with versions 5.004 through 5.8.5.
++tested with versions 5.004 through 5.16.3.
+ 
+ This program should work on any reasonably modern UNIX compatible OS. It
+ has been tested successfully on the following operating systems:
+  - Debian: 3.0 (woody), 3.1 (sarge), unstable (sid)
+- - Redhat: 7.x, 8.0, Enterprise Linux 3.0 ES
+- - Fedora Core 1, 3
+- - CentOS 3, 4
++ - Redhat: 7.x, 8.0
++ - RedHat Enterprise Linux: 3.0 ES, 5, 6
++ - Fedora Core: 1, 3
++ - Fedora: 17, 18
++ - CentOS: 3, 4, 5, 6
+  - WhiteBox Enterprise Linux 3.0
+  - Slackware 9.0
+  - SuSE: 9.0
+@@ -82,47 +86,47 @@ check to make sure everything is ready to go:
+     rsnapshot configtest
+ 
+ If this works, you can see essentially what will happen when you run it for
+-real by executing the following command (where interval is hourly, daily, etc):
++real by executing the following command (where interval is alpha, beta, etc):
+ 
+     rsnapshot -t [interval]
+ 
+ Once you are happy with everything, the final step is to setup a cron job to
+ automate your backups. Here is a quick example which makes backups every four
+-hours, and daily backups for a week:
++hours, and beta backups for a week:
+     
+-    0 */4 * * *     /usr/local/bin/rsnapshot hourly
+-    50 23 * * *     /usr/local/bin/rsnapshot daily
++    0 */4 * * *     /usr/local/bin/rsnapshot alpha
++    50 23 * * *     /usr/local/bin/rsnapshot beta
+     
+-In the previous example, there will be six "hourly" snapshots
++In the previous example, there will be six "alpha" snapshots
+ taken each day (at 0,4,8,12,16, and 20 hours). There will also
+-be daily snapshots taken every night at 11:50PM. The number of
++be beta snapshots taken every night at 11:50PM. The number of
+ snapshots that are saved depends on the "interval" settings in
+ /etc/rsnapshot.conf.
+ 
+ For example:
+     
+-    interval    hourly    6
++    interval    alpha    6
+     
+-This means that every time "rsnapshot hourly" is run, it will make a
++This means that every time "rsnapshot alpha" is run, it will make a
+ new snapshot, rotate the old ones, and retain the most recent six
+-(hourly.0 - hourly.5).
++(alpha.0 - alpha.5).
+ 
+-If you prefer instead to have daily, weekly and monthly backups,
+-you might set up cron like this:
+-    00 00 * * *     /usr/local/bin/rsnapshot daily
+-    00 23 * * 6     /usr/local/bin/rsnapshot weekly
+-    00 22 1 * *     /usr/local/bin/rsnapshot monthly
++If you prefer instead to have three levels of backups (which we'll
++call beta, gamma and delta), you might set up cron like this:
++    00 00 * * *     /usr/local/bin/rsnapshot beta
++    00 23 * * 6     /usr/local/bin/rsnapshot gamma
++    00 22 1 * *     /usr/local/bin/rsnapshot delta
+ 
+-This specifies a daily rsnapshot at midnight, a weekly snapshot
+-on Saturdays at 11:00pm and a monthly rsnapshot at 10pm on the
++This specifies a beta rsnapshot at midnight, a gamma snapshot
++on Saturdays at 11:00pm and a delta rsnapshot at 10pm on the
+ first day of each month.
+ 
+ Note that the backups are done from the highest interval first
+-(in this case monthly) and go down to the lowest interval.  If
+-you are not having cron invoke the "hourly" snapshot interval,
+-then you must also ensure that hourly is not listed as one of 
+-your intervals in rsnapshot.conf (for example, comment out hourly,
+-so that "daily" becomes the lowest interval).
++(in this case delta) and go down to the lowest interval.  If
++you are not having cron invoke the "alpha" snapshot interval,
++then you must also ensure that alpha is not listed as one of 
++your intervals in rsnapshot.conf (for example, comment out alpha,
++so that "beta" becomes the lowest interval).
+ 
+ Remember that it is only the lowest interval which actually does
+ the rsync to back up the relevant source directories, the higher
+diff --git a/README.developers b/README.developers
+new file mode 100644
+index 0000000..7c4d28b
+--- /dev/null
++++ b/README.developers
+@@ -0,0 +1,28 @@
++Source code control
++-------------------
++
++The rsnapshot source code lives on Github:
++  https://github.com/DrHyde/rsnapshot
++
++The 'master' branch should be complete, by which we mean that there should
++be no half-completed features in it.  This means that anything which
++requires more than one commit should be done in a branch.
++
++Trivial changes (such as correcting spalling mistooks, or which change
++just one or two lines of code) can go straight into master.  Non-trivial
++changes should be reviewed by another developer, by raising a github
++"pull request".
++
++Releases and versions
++---------------------
++
++Releases should be done from branches, named for the release version,
++eg release-1.4.  The first release of that version should be tagged '1.4.0'.
++Subsequent releases of that version, which should contain no changes other
++than bugfixes and security fixes, should also be tagged as, eg, '1.4.1'.
++
++Bug tracker
++-----------
++
++The bug tracker and mailing lists are on Sourceforge:
++  https://sourceforge.net/projects/rsnapshot/
+diff --git a/configure b/configure
+index c9a2566..e20a39d 100755
+--- a/configure
++++ b/configure
+@@ -1,6 +1,6 @@
+ #! /bin/sh
+ # Guess values for system-dependent variables and create Makefiles.
+-# Generated by GNU Autoconf 2.59 for rsnapshot 1.3.1.
++# Generated by GNU Autoconf 2.59 for rsnapshot 1.3.1.1.
+ #
+ # Report bugs to <rsnapshot-discuss@lists.sourceforge.net>.
+ #
+@@ -269,8 +269,8 @@ SHELL=${CONFIG_SHELL-/bin/sh}
+ # Identity of this package.
+ PACKAGE_NAME='rsnapshot'
+ PACKAGE_TARNAME='rsnapshot'
+-PACKAGE_VERSION='1.3.1'
+-PACKAGE_STRING='rsnapshot 1.3.1'
++PACKAGE_VERSION='1.3.1.1'
++PACKAGE_STRING='rsnapshot 1.3.1.1'
+ PACKAGE_BUGREPORT='rsnapshot-discuss@lists.sourceforge.net'
+ 
+ ac_subst_vars='SHELL PATH_SEPARATOR PACKAGE_NAME PACKAGE_TARNAME PACKAGE_VERSION PACKAGE_STRING PACKAGE_BUGREPORT exec_prefix prefix program_transform_name bindir sbindir libexecdir datadir sysconfdir sharedstatedir localstatedir libdir includedir oldincludedir infodir mandir build_alias host_alias target_alias DEFS ECHO_C ECHO_N ECHO_T LIBS INSTALL_PROGRAM INSTALL_SCRIPT INSTALL_DATA CYGPATH_W PACKAGE VERSION ACLOCAL AUTOCONF AUTOMAKE AUTOHEADER MAKEINFO install_sh STRIP ac_ct_STRIP INSTALL_STRIP_PROGRAM mkdir_p AWK SET_MAKE am__leading_dot AMTAR am__tar am__untar CWD PERL CMD_RSYNC RSYNC TEST_CP CP CMD_CP RM TEST_RM CMD_RM SSH TEST_SSH CMD_SSH LOGGER TEST_LOGGER CMD_LOGGER DU TEST_DU CMD_DU LIBOBJS LTLIBOBJS'
+@@ -722,7 +722,7 @@ if test "$ac_init_help" = "long"; then
+   # Omit some internal or obsolete options to make the list less imposing.
+   # This message is too long to be a string in the A/UX 3.1 sh.
+   cat <<_ACEOF
+-\`configure' configures rsnapshot 1.3.1 to adapt to many kinds of systems.
++\`configure' configures rsnapshot 1.3.1.1 to adapt to many kinds of systems.
+ 
+ Usage: $0 [OPTION]... [VAR=VALUE]...
+ 
+@@ -784,7 +784,7 @@ fi
+ 
+ if test -n "$ac_init_help"; then
+   case $ac_init_help in
+-     short | recursive ) echo "Configuration of rsnapshot 1.3.1:";;
++     short | recursive ) echo "Configuration of rsnapshot 1.3.1.1:";;
+    esac
+   cat <<\_ACEOF
+ 
+@@ -895,7 +895,7 @@ fi
+ test -n "$ac_init_help" && exit 0
+ if $ac_init_version; then
+   cat <<\_ACEOF
+-rsnapshot configure 1.3.1
++rsnapshot configure 1.3.1.1
+ generated by GNU Autoconf 2.59
+ 
+ Copyright (C) 2003 Free Software Foundation, Inc.
+@@ -909,7 +909,7 @@ cat >&5 <<_ACEOF
+ This file contains any messages produced by compilers while
+ running configure, to aid debugging if configure makes a mistake.
+ 
+-It was created by rsnapshot $as_me 1.3.1, which was
++It was created by rsnapshot $as_me 1.3.1.1, which was
+ generated by GNU Autoconf 2.59.  Invocation command line was
+ 
+   $ $0 $@
+@@ -1552,7 +1552,7 @@ fi
+ 
+ # Define the identity of the package.
+  PACKAGE='rsnapshot'
+- VERSION='1.3.1'
++ VERSION='1.3.1.1'
+ 
+ 
+ cat >>confdefs.h <<_ACEOF
+@@ -2326,6 +2326,8 @@ CMD_DU="cmd_du		$DU"
+ 
+           ac_config_files="$ac_config_files t/support/etc/relative_delete_bugfix.conf:t/support/etc/relative_delete_bugfix.conf.in"
+ 
++          ac_config_files="$ac_config_files t/support/etc/snapshot_root_with_space.conf:t/support/etc/snapshot_root_with_space.conf.in"
++
+ 
+           ac_config_files="$ac_config_files t/configtest.t:t/configtest.t.in"
+ 
+@@ -2335,6 +2337,8 @@ CMD_DU="cmd_du		$DU"
+ 
+           ac_config_files="$ac_config_files t/relative_delete_bugfix.t:t/relative_delete_bugfix.t.in"
+ 
++          ac_config_files="$ac_config_files t/snapshot_root_with_space.t:t/snapshot_root_with_space.t.in"
++
+ 
+ 
+ cat >confcache <<\_ACEOF
+@@ -2730,7 +2734,7 @@ _ASBOX
+ } >&5
+ cat >&5 <<_CSEOF
+ 
+-This file was extended by rsnapshot $as_me 1.3.1, which was
++This file was extended by rsnapshot $as_me 1.3.1.1, which was
+ generated by GNU Autoconf 2.59.  Invocation command line was
+ 
+   CONFIG_FILES    = $CONFIG_FILES
+@@ -2785,7 +2789,7 @@ _ACEOF
+ 
+ cat >>$CONFIG_STATUS <<_ACEOF
+ ac_cs_version="\\
+-rsnapshot config.status 1.3.1
++rsnapshot config.status 1.3.1.1
+ configured by $0, generated by GNU Autoconf 2.59,
+   with options \\"`echo "$ac_configure_args" | sed 's/[\\""\`\$]/\\\\&/g'`\\"
+ 
+@@ -2896,10 +2900,12 @@ do
+   "t/support/etc/rsync.conf" ) CONFIG_FILES="$CONFIG_FILES t/support/etc/rsync.conf:t/support/etc/rsync.conf.in" ;;
+   "t/support/etc/gnu_cp.conf" ) CONFIG_FILES="$CONFIG_FILES t/support/etc/gnu_cp.conf:t/support/etc/gnu_cp.conf.in" ;;
+   "t/support/etc/relative_delete_bugfix.conf" ) CONFIG_FILES="$CONFIG_FILES t/support/etc/relative_delete_bugfix.conf:t/support/etc/relative_delete_bugfix.conf.in" ;;
++  "t/support/etc/snapshot_root_with_space.conf" ) CONFIG_FILES="$CONFIG_FILES t/support/etc/snapshot_root_with_space.conf:t/support/etc/snapshot_root_with_space.conf.in" ;;
+   "t/configtest.t" ) CONFIG_FILES="$CONFIG_FILES t/configtest.t:t/configtest.t.in" ;;
+   "t/rsync.t" ) CONFIG_FILES="$CONFIG_FILES t/rsync.t:t/rsync.t.in" ;;
+   "t/gnu_cp.t" ) CONFIG_FILES="$CONFIG_FILES t/gnu_cp.t:t/gnu_cp.t.in" ;;
+   "t/relative_delete_bugfix.t" ) CONFIG_FILES="$CONFIG_FILES t/relative_delete_bugfix.t:t/relative_delete_bugfix.t.in" ;;
++  "t/snapshot_root_with_space.t" ) CONFIG_FILES="$CONFIG_FILES t/snapshot_root_with_space.t:t/snapshot_root_with_space.t.in" ;;
+   *) { { echo "$as_me:$LINENO: error: invalid argument: $ac_config_target" >&5
+ echo "$as_me: error: invalid argument: $ac_config_target" >&2;}
+    { (exit 1); exit 1; }; };;
+diff --git a/configure.ac b/configure.ac
+index 339b1b5..490f221 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -1,6 +1,6 @@
+-dnl $Id: configure.ac,v 1.49 2008/04/27 10:23:58 djk20 Exp $
++dnl $Id: configure.ac,v 1.52 2009/11/21 07:04:02 djk20 Exp $
+ 
+-AC_INIT(rsnapshot, 1.3.1, rsnapshot-discuss@lists.sourceforge.net)
++AC_INIT(rsnapshot, 1.3.1.1, rsnapshot-discuss@lists.sourceforge.net)
+ AM_INIT_AUTOMAKE
+ AC_PROG_MAKE_SET
+ AC_PROG_INSTALL
+@@ -261,13 +261,16 @@ AC_CONFIG_FILES(t/support/etc/configtest.conf:t/support/etc/configtest.conf.in)
+ AC_CONFIG_FILES(t/support/etc/rsync.conf:t/support/etc/rsync.conf.in)
+ AC_CONFIG_FILES(t/support/etc/gnu_cp.conf:t/support/etc/gnu_cp.conf.in)
+ AC_CONFIG_FILES(t/support/etc/relative_delete_bugfix.conf:t/support/etc/relative_delete_bugfix.conf.in)
++AC_CONFIG_FILES(t/support/etc/snapshot_root_with_space.conf:t/support/etc/snapshot_root_with_space.conf.in)
++AC_CONFIG_FILES(t/support/etc/link-dest_-t_when_only_one_snapshot.conf:t/support/etc/link-dest_-t_when_only_one_snapshot.conf.in)
+ 
+ dnl regression test scripts
+ AC_CONFIG_FILES(t/configtest.t:t/configtest.t.in)
+ AC_CONFIG_FILES(t/rsync.t:t/rsync.t.in)
+ AC_CONFIG_FILES(t/gnu_cp.t:t/gnu_cp.t.in)
+ AC_CONFIG_FILES(t/relative_delete_bugfix.t:t/relative_delete_bugfix.t.in)
+-
++AC_CONFIG_FILES(t/snapshot_root_with_space.t:t/snapshot_root_with_space.t.in)
++AC_CONFIG_FILES(t/link-dest_-t_when_only_one_snapshot.t:t/link-dest_-t_when_only_one_snapshot.t.in)
+ 
+ AC_OUTPUT
+ 
+diff --git a/redhat/README b/redhat/README
+index b3366d4..bd1cd30 100644
+--- a/redhat/README
++++ b/redhat/README
+@@ -11,3 +11,7 @@ rpm -ivh /path/to/your/RPMS/noarch/rsnapshot-1.x.x-0.noarch.rpm
+ 
+ If you don't want to make an RPM, you can download the latest version at
+ http://www.rsnapshot.org/
++
++Fedora includes a rsnapshot RPM directly in its repositories.  And for RedHat
++Enterprise Linux and its derivatives there is a rsnapshot RPM available in
++EPEL (http://fedoraproject.org/wiki/EPEL).
+diff --git a/rsnapshot-diff.pl b/rsnapshot-diff.pl
+index 5b69bec..3da6651 100755
+--- a/rsnapshot-diff.pl
++++ b/rsnapshot-diff.pl
+@@ -13,7 +13,7 @@
+ # http://www.rsnapshot.org/
+ ##############################################################################
+ 
+-# $Id: rsnapshot-diff.pl,v 1.3 2006/05/31 19:51:03 drhyde Exp $
++# $Id: rsnapshot-diff.pl,v 1.6 2010/08/10 13:00:15 drhyde Exp $
+ 
+ =head1 NAME
+ 
+@@ -32,20 +32,23 @@ my $program_name = 'rsnapshot-diff';
+ my %opts;
+ my $verbose = 0;
+ my $ignore = 0;
++my $show_size = 0;
+ 
+-my $result = getopts('vVhi', \%opts);
++my $result = getopts('vVhHis', \%opts);
+ 
+ # help
+ if ($opts{'h'}) {
+     print qq{
+-    $program_name [-vVhi] dir1 dir2
++    $program_name [-vVHhi] dir1 dir2
+ 
+     $program_name shows the differences between two 'rsnapshot' backups.
+ 
+     -h    show this help
+-    -v    be verbose
+-    -V    be more verbose (mutter about unchanged files)
++    -H    also show "human" sizes - MB and GB as well as just bytes
+     -i    ignore symlinks, directories, and special files in verbose output
++    -s    show the size of each changed file
++    -v    be verbose
++    -V    be more verbose (mutter about unchanged files and about symlinks)
+     dir1  the first directory to look at
+     dir2  the second directory to look at
+ 
+@@ -84,21 +87,31 @@ and added.
+ 
+ Displays help information
+ 
+-=item -v (verbose)
+-
+-Be verbose.  This will spit out a list of all changes as they are encountered,
+-as well as the summary at the end.
++=item -H (human)
+ 
+-=item -V (more verbose)
+-
+-Be more verbose - as well as listed changes, unchanged files will be listed
+-too.
++Display more human-friendly numbers - as well as showing the number of
++bytes changed, also show MB and GB.
+ 
+ =item -i (ignore)
+ 
+ If verbosity is turned on, -i suppresses information about symlinks,
+ directories, and special files.
+ 
++=item -s (show size)
++
++Show the size of each changed file after the + or - sign.  To sort the files by
++decreasing size, use this option and run the output through "sort -k 2 -rn".
++
++=item -v (verbose)
++
++Be verbose.  This will spit out a list of all changes as they are encountered,
++apart from symlink, as well as the summary at the end.
++
++=item -V (more verbose)
++
++Be more verbose - as well as listing changed files, unchanged files and
++symlinks will be listed too.
++
+ =item dir1 and dir2
+ 
+ These are the only compulsory parameters, and should be the names of two
+@@ -120,22 +133,34 @@ if ($opts{'V'}) { $verbose = 2; }
+ # ignore
+ if ($opts{'i'}) { $ignore = 1; }
+ 
++# size
++if ($opts{'s'}) { $show_size = 1; }
+ 
+ if(!exists($ARGV[1]) || !-d $ARGV[0] || !-d $ARGV[1]) {
+     die("$program_name\nUsage: $program_name [-vVhi] dir1 dir2\nType $program_name -h for details\n");
+ }
+ 
+ my($dirold, $dirnew) = @ARGV;
++my($addedfiles, $addedspace, $deletedfiles, $deletedspace) = (0, 0, 0, 0);
++my($addedspace_mb, $addedspace_gb, $deletedspace_mb, $deletedspace_gb) = (0, 0, 0, 0);
++
+ ($dirold, $dirnew) = ($dirnew, $dirold) if(-M $dirold < -M $dirnew);
+ print "Comparing $dirold to $dirnew\n";
+ 
+-my($addedfiles, $addedspace, $deletedfiles, $deletedspace) = (0, 0, 0, 0);
+-
+ compare_dirs($dirold, $dirnew);
+ 
++$addedspace_mb = sprintf("%.2f", $addedspace / (1024 * 1024));
++$addedspace_gb = sprintf("%.2f", $addedspace_mb / 1024);
++$deletedspace_mb = sprintf("%.2f", $deletedspace / (1024 * 1024));
++$deletedspace_gb = sprintf("%.2f", $deletedspace_mb / 1024);
++
+ print "Between $dirold and $dirnew:\n";
+-print "  $addedfiles were added, taking $addedspace bytes;\n";
+-print "  $deletedfiles were removed, saving $deletedspace bytes;\n";
++print "  $addedfiles were added, taking $addedspace bytes".
++  ($opts{H} ? " ($addedspace_mb MB, $addedspace_gb GB)" : '').
++  "\n";
++print "  $deletedfiles were removed, saving $deletedspace bytes".
++  ($opts{H} ? " ($deletedspace_mb MB, $deletedspace_gb GB)" : '').
++  "\n";
+ 
+ sub compare_dirs {
+     my($old, $new) = @_;
+@@ -176,10 +201,14 @@ sub add {
+     print "Adding ".join(', ', @added)."\n" if(DEBUG && @added);
+     foreach(grep { !-d } @added) {
+         $addedfiles++;
+-        $addedspace += (mystat($_))[7];
++        my $size = (mystat($_))[7];
++        $addedspace += $size;
+         # if ignore is on, only print files
+         unless ($ignore && (-l || !-f)) {
+-            print "+ $_\n" if($verbose);
++            print ''.($show_size ? "+ $size $_" : "+ $_").
++	          (-l $_ ? ' (symlink)' : '').
++		  "\n"
++	        if($verbose == 2 || ($verbose == 1 && !-l $_));
+         }
+     }
+     foreach my $dir (grep { !-l && -d } @added) {
+@@ -193,10 +222,14 @@ sub remove {
+     print "Removing ".join(', ', @removed)."\n" if(DEBUG && @removed);
+     foreach(grep { !-d } @removed) {
+         $deletedfiles++;
+-        $deletedspace += (mystat($_))[7];
++        my $size = (mystat($_))[7];
++        $deletedspace += $size;
+         # if ignore is on, only print files
+         unless ($ignore && (-l || !-f)) {
+-            print "- $_\n" if($verbose);
++            print ''.($show_size ? "- $size $_" : "- $_").
++	          (-l $_ ? ' (symlink)' : '').
++		  "\n"
++	        if($verbose == 2 || ($verbose == 1 && !-l $_));
+         }
+     }
+     foreach my $dir (grep { !-l && -d } @removed) {
+@@ -237,7 +270,7 @@ David Cantrell E<lt>david@cantrell.org.ukE<gt>
+ 
+ =head1 COPYRIGHT
+ 
+-Copyright 2005 David Cantrell
++Copyright 2005-2010 David Cantrell
+ 
+ =head1 LICENCE
+ 
+diff --git a/rsnapshot-program.pl b/rsnapshot-program.pl
+index dfd7ef6..85972fd 100755
+--- a/rsnapshot-program.pl
++++ b/rsnapshot-program.pl
+@@ -26,7 +26,7 @@
+ #                                                                      #
+ ########################################################################
+ 
+-# $Id: rsnapshot-program.pl,v 1.398 2008/08/09 02:15:49 djk20 Exp $
++# $Id: rsnapshot-program.pl,v 1.432 2012/04/24 21:37:11 drhyde Exp $
+ 
+ # tabstops are set to 4 spaces
+ # in vi, do: set ts=4 sw=4
+@@ -81,7 +81,7 @@ my @backup_points;
+ # array of backup points to rollback, in the event of failure
+ my @rollback_points;
+ 
+-# "intervals" are user defined time periods (e.g., hourly, daily)
++# "intervals" are user defined time periods (e.g., alpha, beta)
+ # this array holds hash_refs containing the name of the interval,
+ # and the number of snapshots to keep of it
+ #
+@@ -187,6 +187,8 @@ $SIG{'INT'}		= sub { bail('rsnapshot was sent INT signal... cleaning up');  };
+ $SIG{'QUIT'}	= sub { bail('rsnapshot was sent QUIT signal... cleaning up'); };
+ $SIG{'ABRT'}	= sub { bail('rsnapshot was sent ABRT signal... cleaning up'); };
+ $SIG{'TERM'}	= sub { bail('rsnapshot was sent TERM signal... cleaning up'); };
++# For a PIPE error, we dont want any more output so set $verbose less than 1.
++$SIG{'PIPE'}	= sub { $verbose = 0; bail('rsnapshot was sent PIPE signal... Hint: if rsnapshot is running from cron, check that mail is installed on this system, or redirect stdout and stderr in cron job'); };
+ 
+ ########################################
+ ###      CORE PROGRAM STRUCTURE      ###
+@@ -224,7 +226,7 @@ if ($cmd eq 'configtest') {
+ }
+ 
+ # parse config file (if it exists)
+-if (defined($config_file) && (-f "$config_file") && (-r "$config_file")) {
++if (defined($config_file) && -r $config_file) {
+ 	# if there is a problem, this subroutine will exit the program and notify the user of the error
+ 	parse_config_file();
+ 	validate_config_file();
+@@ -283,7 +285,10 @@ chdir($config_vars{'snapshot_root'});
+ handle_interval( $cmd );
+ 
+ # if we have a lockfile, remove it
+-remove_lockfile();
++# however, this will have already been done if use_lazy_deletes is turned
++#   on, and there may be a lockfile from another process now in place,
++#   so in that case don't just blindly delete!
++remove_lockfile() unless($use_lazy_deletes);
+ 
+ # if we got this far, the program is done running
+ # write to the log and syslog with the status of the outcome
+@@ -344,7 +349,7 @@ Commands:
+     diff             - Front-end interface to the rsnapshot-diff program.
+                        Accepts two optional arguments which can be either
+                        filesystem paths or backup directories within the
+-                       snapshot_root (e.g., /etc/ daily.0/etc/). The default
++                       snapshot_root (e.g., /etc/ beta.0/etc/). The default
+                        is to compare the two most recent snapshots.
+     du               - Show disk usage in the snapshot_root.
+                        Accepts an optional destination path for comparison
+@@ -458,7 +463,7 @@ sub parse_cmd_line_opts {
+ 			for (my $i=1; $i<scalar(@ARGV); $i++) {
+ 				print STDERR "Unknown option: $ARGV[$i]\n";
+ 				print STDERR "Please make sure all switches come before commands\n";
+-				print STDERR "(e.g., 'rsnapshot -v hourly', not 'rsnapshot hourly -v')\n";
++				print STDERR "(e.g., 'rsnapshot -v alpha', not 'rsnapshot alpha -v')\n";
+ 				exit(1);
+ 			}
+ 			
+@@ -502,14 +507,14 @@ sub parse_config_file {
+ 	my @configs = ();
+ 	
+ 	# open the config file
+-	my $config_file = shift() || $config_file;
++	my $current_config_file = shift() || $config_file;
+ 	my $CONFIG;
+-	if($config_file =~ /^`.*`$/) {
+-	    open($CONFIG, "$config_file|") ||
+-	        bail("Couldn't execute \"$config_file\" to get config information\nAre you sure you have permission?");
++	if($current_config_file =~ /^`(.*)`$/) {
++	    open($CONFIG, "$1 |") 
++	        or bail("Couldn't execute \"$1\" to get config information\n");
+ 	} else {
+-	    $CONFIG = IO::File->new($config_file)
+-		or bail("Could not open config file \"$config_file\"\nAre you sure you have permission?");
++	    $CONFIG = IO::File->new($current_config_file)
++		or bail("Could not open config file \"$current_config_file\"\nAre you sure you have permission?");
+         }
+ 	
+ 	# read it line by line
+@@ -520,6 +525,11 @@ sub parse_config_file {
+ 		# count line numbers
+ 		$file_line_num++;
+ 		
++		# Ensure the correct filename is reported in error messages.  Setting it on
++		# every iteration ensures it will be reset after recursive calls to this
++		# function.
++		$config_file = $current_config_file;
++		
+ 		# assume the line is formatted incorrectly
+ 		my $line_syntax_ok = 0;
+ 		
+@@ -529,8 +539,8 @@ sub parse_config_file {
+ 		# ignore blank lines
+ 		if (is_blank($line)) { next; }
+ 
+-		# if the next line begins with space or tab it belongs to this line
+-		while (defined ($configs[$file_line_num]) && $configs[$file_line_num] =~ /^(\t|\s)/) {
++		# if the next line begins with space or tab and also has a non-space character, then it belongs to this line as a continuation.
++		while (defined ($configs[$file_line_num]) && $configs[$file_line_num] =~ /^[\t ]+\S/) {
+ 			(my $newline = $configs[$file_line_num]) =~ s/^\s+|\s+$//g;
+ 			$line = $line . "\t" . $newline;
+ 			$file_line_num++;
+@@ -568,7 +578,7 @@ sub parse_config_file {
+ 			$value =~ /^`(.*)`$/;
+ 			if(
+ 			    (defined($value) && -f $value && -r $value) ||
+-			    (defined($1) && -x $1)
++			    (defined($1) && is_valid_script($1))
+ 			) {
+ 				$line_syntax_ok = 1;
+ 				parse_config_file($value);
+@@ -619,7 +629,7 @@ sub parse_config_file {
+ 					next;
+ 				}
+ 				# make sure it's writable
+-				if ( ! -w "$value" ) {
++				if ( $cmd ne 'du' && ! -w "$value" ) {
+ 					config_err($file_line_num, "$line - snapshot_root exists but is not writable");
+ 					next;
+ 				}
+@@ -755,45 +765,45 @@ sub parse_config_file {
+ 		
+ 		# CHECK FOR lvcreate (optional)
+ 		if ($var eq 'linux_lvm_cmd_lvcreate') {
+-			if ((-f "$value") && (-x "$value") && (1 == is_real_local_abs_path($value))) {
++			if (is_valid_script($value)) {
+ 				$config_vars{'linux_lvm_cmd_lvcreate'} = $value;
+ 				$line_syntax_ok = 1;
+ 				next;
+ 			} else {
+-				config_err($file_line_num, "$line - $value is not executable");
++				config_err($file_line_num, "$line - $value is not a valid executable");
+ 				next;
+ 			}
+ 		}
+ 		# CHECK FOR lvremove (optional)
+ 		if ($var eq 'linux_lvm_cmd_lvremove') {
+-			if ((-f "$value") && (-x "$value") && (1 == is_real_local_abs_path($value))) {
++			if (is_valid_script($value)) {
+ 				$config_vars{'linux_lvm_cmd_lvremove'} = $value;
+ 				$line_syntax_ok = 1;
+ 				next;
+ 			} else {
+-				config_err($file_line_num, "$line - $value is not executable");
++				config_err($file_line_num, "$line - $value is not a valid executable");
+ 				next;
+ 			}
+ 		}
+ 		# CHECK FOR mount (optional)
+ 		if ($var eq 'linux_lvm_cmd_mount') {
+-			if ((-f "$value") && (-x "$value") && (1 == is_real_local_abs_path($value))) {
++			if (is_valid_script($value)) {
+ 				$config_vars{'linux_lvm_cmd_mount'} = $value;
+ 				$line_syntax_ok = 1;
+ 				next;
+ 			} else {
+-				config_err($file_line_num, "$line - $value is not executable");
++				config_err($file_line_num, "$line - $value is not a valid executable");
+ 				next;
+ 			}
+ 		}
+ 		# CHECK FOR umount (optional)
+ 		if ($var eq 'linux_lvm_cmd_umount') {
+-			if ((-f "$value") && (-x "$value") && (1 == is_real_local_abs_path($value))) {
++			if (is_valid_script($value)) {
+ 				$config_vars{'linux_lvm_cmd_umount'} = $value;
+ 				$line_syntax_ok = 1;
+ 				next;
+ 			} else {
+-				config_err($file_line_num, "$line - $value is not executable");
++				config_err($file_line_num, "$line - $value is not a valid executable");
+ 				next;
+ 			}
+ 		}
+@@ -915,18 +925,11 @@ sub parse_config_file {
+ 				next;
+ 			}
+ 			
+-			if (!defined($dest))	{
++			if (!defined($dest) || $dest eq "")	{
+ 				config_err($file_line_num, "$line - no destination path specified for backup point");
+ 				next;
+ 			}
+ 			
+-			# make sure we have a local path for the destination
+-			# (we do NOT want an absolute path)
+-			if ( is_valid_local_abs_path($dest) ) {
+-				config_err($file_line_num, "$line - Backup destination $dest must be a local, relative path");
+-				next;
+-			}
+-			
+ 			# make sure we aren't traversing directories
+ 			if ( is_directory_traversal($src) ) {
+ 				config_err($file_line_num, "$line - Directory traversal attempted in $src");
+@@ -945,7 +948,7 @@ sub parse_config_file {
+ 				
+ 			# syntactically valid remote ssh?
+ 			} elsif ( is_ssh_path($src) ) {
+-				# if it's an absolute ssh path, make sure we have ssh
++				# if it's an ssh path, make sure we have ssh
+ 				if (!defined($config_vars{'cmd_ssh'})) {
+ 					config_err($file_line_num, "$line - Cannot handle $src, cmd_ssh not defined in $config_file");
+ 					next;
+@@ -1005,8 +1008,9 @@ sub parse_config_file {
+ 			
+ 			# validate destination path
+ 			#
+-			if ( is_valid_local_abs_path($dest) ) {
+-				config_err($file_line_num, "$line - Full paths not allowed for backup destinations");
++			# make sure we have a local NON absolute path for dest
++			if ( ! is_valid_local_non_abs_path($dest) ) {
++				config_err($file_line_num, "$line - Backup destination $dest must be a local, relative path");
+ 				next;
+ 			}
+ 			
+@@ -1022,106 +1026,26 @@ sub parse_config_file {
+ 			}
+ 			
+ 			# remember src/dest
+-			# also, first check to see that we're not backing up the snapshot directory
+-			#
+-			# there are now two methods of making sure the user doesn't accidentally backup their snapshot_root
+-			# recursively in a backup point: the good way, and the old way.
+-			#
+-			# in the old way, when rsnapshot detects the snapshot_root is under a backup point, the files and
+-			# directories under that backup point are enumerated and get turned into several distinct rsync calls.
+-			# for example, if you tried to back up "/", it would do a separate rsync invocation for "/bin/", "/etc/",
+-			# and so on. this wouldn't be so bad except that it makes certain rsync options like one_fs and the
+-			# include/exclude rules act funny since rsync isn't starting where the user expects (and there is no
+-			# really good way to provide a workaround, either automatically or manually). however, changing this
+-			# behaviour that users have come to rely on would not be very nice, so the old code path is left here
+-			# for those that specifically enable the rsync_long_args parameter but don't set the --relative option.
+-			#
+-			# the new way is much nicer, but relies on the --relative option to rsync, which only became the default
+-			# in rsnapshot 1.2.0 (primarily for this feature). basically, rsnapshot dynamically constructs an exclude
+-			# path to avoid backing up the snapshot_root. clean and simple. many thanks to bharat mediratta for coming
+-			# up with this solution!!!
++			my %hash;
++			$hash{'src'}	= $src;
++			$hash{'dest'}	= $dest;
++			if (defined($opts_ref)) {
++				$hash{'opts'} = $opts_ref;
++			}
++			
++			# If this backup point contains the snapshot root, add an exclude to avoid
++			# backing up the snapshot root recursively.  The exclude is anchored (by virtue
++			# of the leading slash of $config_vars{'snapshot_root'}) and applies to absolute
++			# paths (the "/" modifier), so it should match the snapshot root and nothing else
++			# regardless of --relative.
+ 			#
+-			# we only need to do any of this if the user IS trying to backup the snapshot_root
++			# This should work in any version of rsync since 2.6.4 except for 2.6.7, due to a bug:
++			# http://lists.samba.org/archive/rsync/2006-March/014953.html
+ 			if ((is_real_local_abs_path("$src")) && ($config_vars{'snapshot_root'} =~ m/^$src/)) {
+-				
+-				# old, less good, backward compatibility method
+-				if ( defined($config_vars{'rsync_long_args'}) && ($config_vars{'rsync_long_args'} !~ m/--relative/) ) {
+-					# remove trailing slashes from source and dest, since we will be using our own
+-					$src    = remove_trailing_slash($src);
+-					$dest   = remove_trailing_slash($dest);
+-					
+-					opendir(SRC, "$src") or bail("Could not open $src");
+-					
+-					while (my $node = readdir(SRC)) {
+-						next if ($node =~ m/^\.\.?$/o); # skip '.' and '..'
+-						
+-						# avoid double slashes from root filesystem
+-						if ($src eq '/') {
+-							$src = '';
+-						}
+-						
+-						# if this directory is in the snapshot_root, skip it
+-						# otherwise, back it up
+-						#
+-						if ("$config_vars{'snapshot_root'}" !~ m/^$src\/$node/) {
+-							my %hash;
+-							
+-							$hash{'src'}    = "$src/$node";
+-							$hash{'dest'}   = "$dest/$node";
+-							
+-							if (defined($opts_ref)) {
+-								$hash{'opts'} = $opts_ref;
+-							}
+-							push(@backup_points, \%hash);
+-						}
+-					}
+-					closedir(SRC);
+-					
+-				# new, shiny, preferred method. the way of the future.
+-				} else {
+-					my %hash;
+-					my $exclude_path;
+-					
+-					$hash{'src'}	= $src;
+-					$hash{'dest'}	= $dest;
+-					if (defined($opts_ref)) {
+-						$hash{'opts'} = $opts_ref;
+-					}
+-					
+-					# dynamically generate an exclude path to avoid backing up the snapshot root.
+-					# depending on the backup point and the snapshot_root location, this could be
+-					# almost anything. it's tempting to think that just using the snapshot_root as
+-					# the exclude path will work, but it doesn't. instead, this an exclude path that
+-					# starts relative to the backup point. for example, if snapshot_root is set to
+-					# /backup/private/snapshots/, and the backup point is /backup/, the exclude path
+-					# will be private/snapshots/. the trailing slash does not appear to matter.
+-					#
+-					# it's also worth noting that this doesn't work at all without the --relative
+-					# flag being passed to rsync (which is now the default).
+-					#
+-					# this method was added by bharat mediratta, and replaces my older, less elegant
+-					# attempt to run multiple invocations of rsync instead.
+-					#
+-					$exclude_path = $config_vars{'snapshot_root'};
+-					$exclude_path =~ s/^$src//;
+-					
+-					# pass it to rsync on this backup point only
+-					$hash{'opts'}{'extra_rsync_long_args'} .= sprintf(' --exclude=%s', $exclude_path);
+-					
+-					push(@backup_points, \%hash);
+-				}
+-				
+-			# the user is NOT trying to backup the snapshot_root. no workarounds required at all.
+-			} else {
+-				my %hash;
+-				$hash{'src'}	= $src;
+-				$hash{'dest'}	= $dest;
+-				if (defined($opts_ref)) {
+-					$hash{'opts'} = $opts_ref;
+-				}
+-				push(@backup_points, \%hash);
++				$hash{'opts'}{'extra_rsync_long_args'} .= sprintf(' --filter=-/_%s', $config_vars{'snapshot_root'});
+ 			}
+ 			
++			push(@backup_points, \%hash);
+ 			next;
+ 		}
+ 		
+@@ -1147,8 +1071,8 @@ sub parse_config_file {
+ 			@script_argv = split(/\s+/, $full_script);
+ 			$script = $script_argv[0];
+ 			
+-			# make sure the destination is a full path
+-			if (1 == is_valid_local_abs_path($dest)) {
++			# make sure the destination is a relative path
++			if (0 == is_valid_local_non_abs_path($dest)) {
+ 				config_err($file_line_num, "$line - Backup destination $dest must be a local, relative path");
+ 				next;
+ 			}
+@@ -1553,7 +1477,21 @@ sub validate_config_file {
+ 				if ( -e "$config_vars{'snapshot_root'}" ) {
+ 					print_err ("$config_vars{'snapshot_root'} is not a directory.", 1);
+ 				} else {
+-					print_err ("$config_vars{'snapshot_root'} does not exist.", 1);
++					my $snapshot_root = $config_vars{'snapshot_root'};
++					# Check parent directories until we find one that exists
++					while (! -e $snapshot_root) { 
++						print_err ("$snapshot_root does not exist.", 1);
++						$snapshot_root =~ m%(.*)/[^/]*%;
++						if (defined($1) && $1 ne $snapshot_root) {
++							$snapshot_root = $1;
++						} else {
++							last;
++						}
++					}
++					if (-e $snapshot_root && ! -d $snapshot_root) {
++						print_err ("$snapshot_root is not a directory.", 1);
++						syslog_err("$snapshot_root is not a directory.");
++					}
+ 				}
+ 				print_err ("rsnapshot refuses to create snapshot_root when no_create_root is enabled", 1);
+ 				syslog_err("rsnapshot refuses to create snapshot_root when no_create_root is enabled");
+@@ -1577,6 +1515,7 @@ sub validate_config_file {
+ 			my $tmp_dest_path = $$bp_ref{'dest'};
+ 			
+ 			# normalize multiple slashes, and strip trailing slash
++			# FIXME: Decide whether to allow an empty destination path, and reject or handle such paths accordingly.
+ 			$tmp_dest_path =~ s/\/+/\//g;
+ 			$tmp_dest_path =~ s/\/$//;
+ 			
+@@ -1608,7 +1547,7 @@ sub validate_config_file {
+ 					$tmp_b  .= '/';
+ 					$tmp_bs .= '/';
+ 					
+-					if ("$b_dest" =~ m/^$bs_dest/) {
++					if ("$tmp_b" =~ m/^$tmp_bs/) {
+ 						# duplicate entries, stop here
+ 						print_err (
+ 							"destination conflict between \"$tmp_b\" and \"$tmp_bs\" in backup / backup_script entries",
+@@ -1638,7 +1577,7 @@ sub validate_config_file {
+ 					$path1 .= '/';
+ 					$path2 .= '/';
+ 					
+-					if (("$path1" =~ m/$path2/) or ("$path2" =~ m/$path1/)) {
++					if (("$path1" =~ m/^$path2/) or ("$path2" =~ m/^$path1/)) {
+ 						print_err (
+ 							"destination conflict between \"$path1\" and \"$path2\" in multiple backup_script entries", 1
+ 						);
+@@ -2028,7 +1967,7 @@ sub print_warn {
+ 	}
+ 	
+ 	# write to log
+-	log_msg($str, $level);
++	log_warn($str, $level);
+ }
+ 
+ # accepts string, and level
+@@ -2164,15 +2103,15 @@ sub syslog_msg {
+ 	if (defined($config_vars{'cmd_logger'})) {
+ 		# print out our call to syslog
+ 		if (defined($verbose) && ($verbose >= 4)) {
+-			print_cmd("$config_vars{'cmd_logger'} -i -p $facility.$level -t rsnapshot $msg");
++			print_cmd("$config_vars{'cmd_logger'} -p $facility.$level -t rsnapshot[$$] $msg");
+ 		}
+ 		
+ 		# log to syslog
+ 		if (0 == $test) {
+-			$result = system($config_vars{'cmd_logger'}, '-i', '-p', "$facility.$level", '-t', 'rsnapshot', $msg);
++			$result = system($config_vars{'cmd_logger'}, '-p', "$facility.$level", '-t', "rsnapshot[$$]", $msg);
+ 			if (0 != $result) {
+ 				print_warn("Could not log to syslog:", 2);
+-				print_warn("$config_vars{'cmd_logger'} -i -p $facility.$level -t rsnapshot $msg", 2);
++				print_warn("$config_vars{'cmd_logger'} -p $facility.$level -t rsnapshot[$$] $msg", 2);
+ 			}
+ 		}
+ 	}
+@@ -2233,33 +2172,19 @@ sub get_current_date {
+ 	# 4 = month + 1
+ 	# 5 = year + 1900
+ 	
+-	# example date format (just like Apache logs)
+-	# 28/Feb/2004:23:45:59
+-	
+-	my @months = ('Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec');
+-	
++	# example date format (ISO 8601)
++	# 2012-04-24T22:30:13 (used to be 28/Feb/2004:23:45:59, like Apache)
+ 	my @fields = localtime(time());
+ 	
+-	my $datestr =
+-					# day of month
+-					sprintf("%02i", $fields[3]) .
+-					'/' .
+-					# name of month
+-					$months[$fields[4]] .
+-					'/' .
+-					# year
+-					($fields[5]+1900) .
+-					':' .
+-					# hours (24 hour clock)
+-					sprintf("%02i", $fields[2]) .
+-					':' .
+-					# minutes
+-					sprintf("%02i", $fields[1]) .
+-					':' .
+-					# seconds
+-					sprintf("%02i", $fields[0]);
+-	
+-	return ($datestr);
++	return sprintf(
++	    "%04i-%02i-%02iT%02i:%02i:%02i",
++	    $fields[5] + 1900,
++	    $fields[4] + 1,
++	    $fields[3],
++	    $fields[2],
++	    $fields[1],
++	    $fields[0]
++	);
+ }
+ 
+ # accepts no arguments
+@@ -2347,9 +2272,12 @@ sub add_lockfile {
+ }
+ 
+ # accepts no arguments
+-# accepts the path to a lockfile and tries to remove it
+-# returns undef if lockfile isn't defined in the config file, and 1 upon success
+-# also, it can exit the program with a value of 1 if it can't remove the lockfile
++#
++# returns undef if lockfile isn't defined in the config file
++# return 1 upon success or if there's no lockfile to remove
++# warn if the PID in the lockfile is not the same as the PID of this process
++# exit with a value of 1 if it can't read the lockfile
++# exit with a value of 1 if it can't remove the lockfile
+ #
+ # we don't use bail() to exit on error, because that would call
+ # this subroutine twice in the event of a failure
+@@ -2363,6 +2291,17 @@ sub remove_lockfile {
+ 	my $result = undef;
+ 	
+ 	if ( -e "$lockfile" ) {
++	        if(open(LOCKFILE, $lockfile)) {
++		  chomp(my $locked_pid = <LOCKFILE>);
++		  close(LOCKFILE);
++		  if($locked_pid != $$) {
++		    print_warn("About to remove lockfile $lockfile which belongs to a different process (this is OK if it's a stale lock)");
++		  }
++		} else {
++		  print_err ("Could not read lockfile $lockfile: $!", 0);
++		  syslog_err("Error! Could not read lockfile $lockfile: $!");
++		  exit(1);
++		}
+ 		print_cmd("rm -f $lockfile");
+ 		if (0 == $test) {
+ 			$result = unlink($lockfile);
+@@ -2436,27 +2375,27 @@ sub get_interval_data {
+ 	my %hash;
+ 	
+ 	# which of the intervals are we operating on?
+-	# if we defined hourly, daily, weekly ... hourly = 0, daily = 1, weekly = 2
++	# if we defined alpha, beta, gamma ... alpha = 0, beta = 1, gamma = 2
+ 	my $interval_num;
+ 	
+ 	# the highest possible number for the current interval context
+-	# if we are working on hourly, and hourly is set to 6, this would be
++	# if we are working on alpha, and alpha is set to 6, this would be
+ 	# equal to 5 (since we start at 0)
+ 	my $interval_max;
+ 	
+ 	# this is the name of the previous interval, in relation to the one we're
+-	# working on. e.g., if we're operating on weekly, this should be "daily"
++	# working on. e.g., if we're operating on gamma, this should be "beta"
+ 	my $prev_interval;
+ 	
+ 	# same as $interval_max, except for the previous interval.
+ 	# this is used to determine which of the previous snapshots to pull from
+-	# e.g., cp -al hourly.$prev_interval_max/ daily.0/
++	# e.g., cp -al alpha.$prev_interval_max/ beta.0/
+ 	my $prev_interval_max;
+ 	
+ 	# FIGURE OUT WHICH INTERVAL WE'RE RUNNING, AND HOW IT RELATES TO THE OTHERS
+ 	# THEN RUN THE ACTION FOR THE CHOSEN INTERVAL
+ 	# remember, in each hashref in this loop:
+-	#   "interval" is something like "daily", "weekly", etc.
++	#   "interval" is something like "beta", "gamma", etc.
+ 	#   "number" is the number of these intervals to keep on the filesystem
+ 	
+ 	my $i = 0;
+@@ -2485,7 +2424,7 @@ sub get_interval_data {
+ 		
+ 		# which of the previous interval's numbered directories should we pull from
+ 		# for the interval we're currently set to run?
+-		# e.g., daily.0/ might get pulled from hourly.6/
++		# e.g., beta.0/ might get pulled from alpha.6/
+ 		#
+ 		$prev_interval_max = $$i_ref{'number'} - 1;
+ 		
+@@ -2654,7 +2593,7 @@ sub is_blank {
+ }
+ 
+ # accepts path
+-# returns 1 if it's a valid ssh absolute path
++# returns 1 if it's a valid ssh path
+ # returns 0 otherwise
+ sub is_ssh_path {
+ 	my $path = shift(@_);
+@@ -2665,8 +2604,11 @@ sub is_ssh_path {
+ 	if ($path =~ m/^\s/)				{ return (undef); }
+ 	if ($path =~ m/\s$/)				{ return (undef); }
+ 	
+-	# must have user@host:[~]/path syntax for ssh
+-	if ($path =~ m/^.*?\@.*?:~?\/.*$/)	{ return (1); }
++	# don't match paths that look like URIs (rsync://, etc.)
++	if ($path =~ m,://,)				{ return (undef); }
++	
++	# must have [user@]host:[~.]/path syntax for ssh
++	if ($path =~ m/^(.*?\@)?.*?:[~.]?\/.*$/)	{ return (1); }
+ 	
+ 	return (0);
+ }
+@@ -2758,6 +2700,26 @@ sub is_valid_local_abs_path {
+ }
+ 
+ # accepts path
++# returns 1 if it's a syntactically valid non-absolute (relative) path
++# returns 0 otherwise
++# does not check for directory traversal, since we want to use 
++# a different error message if there is ".." in the path
++sub is_valid_local_non_abs_path {
++	my $path	= shift(@_);
++	
++	if (!defined($path)) { return (0); }
++	if ($path =~ m/^\//) {
++		return (0);		# Absolute path => bad
++	}
++	
++	if ($path =~ m/^\S/) {
++		 return (1);		# Starts with a non-whitespace => good
++	} else {
++		 return (0);		# Empty or starts with whitespace => bad
++	}
++}
++
++# accepts path
+ # returns 1 if it's a directory traversal attempt
+ # returns 0 if it's safe
+ sub is_directory_traversal {
+@@ -2868,8 +2830,8 @@ sub handle_interval {
+ 	
+ 	# here we used to check for interval.delete directories.  This was
+ 	# removed when we switched to using _delete.$$ directories.  This
+-	# was done so that you can run another (eg) rsnapshot hourly, while
+-	# the .delete directory from the previous hourly backup was still
++	# was done so that you can run another (eg) rsnapshot alpha, while
++	# the .delete directory from the previous alpha backup was still
+ 	# going.  Potentially you may have several parallel deletes going on
+ 	# with the new scheme, but I'm pretty sure that you'll catch up
+ 	# eventually and not hopelessly wedge the machine -- DRC
+@@ -2989,14 +2951,17 @@ sub handle_interval {
+ 				bail("Error! rm_rf(\"$config_vars{'snapshot_root'}/_delete.$$\")\n");
+ 			}
+ 		}
+-	} else {
++	} elsif($use_lazy_deletes) {
++	        # only spit this out if lazy deletes are turned on.
++		# Still need to suppress this if they're turned on but we've
++		# not done enough backups to yet need to delete anything
+ 		print_msg("No directory to delete: $config_vars{'snapshot_root'}/_delete.$$", 5);
+ 	}
+ }
+ 
+ # accepts an interval_data_ref
+-# acts on the interval defined as $$id_ref{'interval'} (e.g., hourly)
+-# this should be the smallest interval (e.g., hourly, not daily)
++# acts on the interval defined as $$id_ref{'interval'} (e.g., alpha)
++# this should be the smallest interval (e.g., alpha, not beta)
+ #
+ # rotates older dirs within this interval, hard links .0 to .1,
+ # and rsync data over to .0
+@@ -3304,19 +3269,13 @@ sub rsync_backup_point {
+ 	
+ 	# other misc variables
+ 	my @cmd_stack				= undef;
+-	my $src						= undef;
++	my $src						= $$bp_ref{'src'};
+ 	my $result					= undef;
+-	my $using_relative			= 0;
+ 	
+ 	my $linux_lvm                     = 0;
+ 	my $linux_lvm_oldpwd              = undef;
+ 	my $linux_lvm_snapshotname        = undef;
+ 
+-	if (defined($$bp_ref{'src'})) {
+-		$src = remove_trailing_slash( "$$bp_ref{'src'}" );
+-		$src = add_slashdot_if_root( "$src" );
+-	}
+-	
+ 	# if we're using link-dest later, that target depends on whether we're doing a 'sync' or a regular interval
+ 	# if we're doing a "sync", then look at [lowest-interval].0 instead of [cur-interval].1
+ 	my $interval_link_dest;
+@@ -3325,16 +3284,9 @@ sub rsync_backup_point {
+ 	# start looking for link_dest targets at interval.$start_num
+ 	my $start_num = 1;
+ 	
+-	my $sync_dir_was_present = 0;
+-	
+ 	# if we're doing a sync, we'll start looking at [lowest-interval].0 for a link_dest target
+ 	if ($interval eq 'sync') {
+ 		$start_num = 0;
+-		
+-		# remember now if the .sync directory exists
+-		if ( -d "$config_vars{'snapshot_root'}/.sync" ) {
+-			$sync_dir_was_present = 1;
+-		}
+ 	}
+ 	
+ 	# look for the most recent link_dest target directory
+@@ -3342,9 +3294,17 @@ sub rsync_backup_point {
+ 	foreach my $i_ref (@intervals) {
+ 		if (defined($$i_ref{'number'})) {
+ 			for (my $i = $start_num; $i < $$i_ref{'number'}; $i++) {
++				my $i_check;
++				if ($test && $interval ne 'sync') {
++					# A real run would already have rotated the snapshots up, but this test run hasn't.
++					# Hence, to know whether $i would exist at this point of a real run, we must check for $i - 1.
++					$i_check = $i - 1;
++				} else {
++					$i_check = $i;
++				}
+ 				
+ 				# once we find a valid link_dest target, the search is over
+-				if ( -e "$config_vars{'snapshot_root'}/$$i_ref{'interval'}.$i/$$bp_ref{'dest'}" ) {
++				if ( -e "$config_vars{'snapshot_root'}/$$i_ref{'interval'}.$i_check/$$bp_ref{'dest'}" ) {
+ 					if (!defined($interval_link_dest) && !defined($interval_num_link_dest)) {
+ 						$interval_link_dest		= $$i_ref{'interval'};
+ 						$interval_num_link_dest = $i;
+@@ -3370,8 +3330,8 @@ sub rsync_backup_point {
+ 			$tmp_rollback_point	= remove_trailing_slash($tmp_rollback_point);
+ 			
+ 			if ("$tmp_dest" eq "$tmp_rollback_point") {
+-				print_warn ("$$bp_ref{'src'} skipped due to rollback plan", 2);
+-				syslog_warn("$$bp_ref{'src'} skipped due to rollback plan");
++				print_warn ("$src skipped due to rollback plan", 2);
++				syslog_warn("$src skipped due to rollback plan");
+ 				return (undef);
+ 			}
+ 		}
+@@ -3444,11 +3404,11 @@ sub rsync_backup_point {
+ 	# SEE WHAT KIND OF SOURCE WE'RE DEALING WITH
+ 	#
+ 	# local filesystem
+-	if ( is_real_local_abs_path($$bp_ref{'src'}) ) {
++	if ( is_real_local_abs_path($src) ) {
+ 		# no change
+ 		
+-	# if this is a user@host:/path, use ssh
+-	} elsif ( is_ssh_path($$bp_ref{'src'}) ) {
++	# if this is a user@host:/path (or ...:./path, or ...:~/...), use ssh
++	} elsif ( is_ssh_path($src) ) {
+ 		
+ 		# if we have any args for SSH, add them
+ 		if ( defined($ssh_args) ) {
+@@ -3460,17 +3420,17 @@ sub rsync_backup_point {
+ 		}
+ 		
+ 	# anonymous rsync
+-	} elsif ( is_anon_rsync_path($$bp_ref{'src'}) ) {
++	} elsif ( is_anon_rsync_path($src) ) {
+ 		# make rsync quiet if we're running in quiet mode
+ 		if ($verbose < 2) { $rsync_short_args .= 'q'; }
+ 		
+ 	# cwrsync path
+-	} elsif ( is_cwrsync_path($$bp_ref{'src'}) ) {
++	} elsif ( is_cwrsync_path($src) ) {
+ 		# make rsync quiet if we're running in quiet mode
+ 		if ($verbose < 2) { $rsync_short_args .= 'q'; }
+ 		
+ 	# LVM path
+-	} elsif ( is_linux_lvm_path($$bp_ref{'src'}) ) {
++	} elsif ( is_linux_lvm_path($src) ) {
+ 		# take LVM snapshot and mount, reformat src into local path
+ 
+         unless (defined($config_vars{'linux_lvm_snapshotsize'})) {
+@@ -3487,15 +3447,15 @@ sub rsync_backup_point {
+         }
+ 
+         # parse LVM src ('lvm://vgname/volname/path')
+-        my ($linux_lvmvgname,$linux_lvmvolname, $linux_lvmpath) = ($$bp_ref{'src'} =~ m|^lvm://([^/]+)/([^/]+)/(.*)$|);
++        my ($linux_lvmvgname,$linux_lvmvolname, $linux_lvmpath) = ($src =~ m|^lvm://([^/]+)/([^/]+)/(.*)$|);
+         # lvmvolname and/or path could be the string "0", so test for 'defined':
+         unless (defined($linux_lvmvgname) and defined($linux_lvmvolname) and defined($linux_lvmpath)) {
+-            bail("Could not understand LVM source \"$$bp_ref{'src'}\" in backup_lowest_interval()");
++            bail("Could not understand LVM source \"$src\" in backup_lowest_interval()");
+         }
+         
+         # assemble and execute LVM snapshot command
+         @cmd_stack = ();
+-        push(@cmd_stack, $config_vars{'linux_lvm_cmd_lvcreate'});
++        push(@cmd_stack, split(' ',$config_vars{'linux_lvm_cmd_lvcreate'}));
+         push(@cmd_stack, '--snapshot');
+ 
+         push(@cmd_stack, '--size');
+@@ -3518,7 +3478,7 @@ sub rsync_backup_point {
+         
+         # mount the snapshot
+         @cmd_stack = ();
+-        push(@cmd_stack, $config_vars{'linux_lvm_cmd_mount'});
++        push(@cmd_stack, split(' ', $config_vars{'linux_lvm_cmd_mount'}));
+ 
+         $linux_lvm_snapshotname = join('/', $config_vars{'linux_lvm_vgpath'}, $linux_lvmvgname, $config_vars{'linux_lvm_snapshotname'});
+         push(@cmd_stack, $linux_lvm_snapshotname);
+@@ -3545,12 +3505,12 @@ sub rsync_backup_point {
+             }
+         }
+ 
+-        $$bp_ref{'src'} = './' .  $linux_lvmpath;
++        $src = './' .  $linux_lvmpath;
+         $linux_lvm = 1;
+ 		
+ 	# this should have already been validated once, but better safe than sorry
+ 	} else {
+-		bail("Could not understand source \"$$bp_ref{'src'}\" in backup_lowest_interval()");
++		bail("Could not understand source \"$src\" in backup_lowest_interval()");
+ 	}
+ 	
+ 	# if we're using --link-dest, we'll need to specify the link-dest directory target
+@@ -3558,23 +3518,11 @@ sub rsync_backup_point {
+ 	if (1 == $link_dest) {
+ 		# bp_ref{'dest'} and snapshot_root have already been validated, but these might be blank
+ 		if (defined($interval_link_dest) && defined($interval_num_link_dest)) {
+-			
+-			# make sure the directory exists
+-			if ( -d "$config_vars{'snapshot_root'}/$interval_link_dest.$interval_num_link_dest/$$bp_ref{'dest'}" ) {
+-				
+-				# we don't use link_dest if we already synced once to this directory
+-				if (0 && $sync_dir_was_present) { # always false
+-					
+-					# skip --link-dest, this is the second time the sync has been run, because the .sync directory already exists
+-					
+-				# default: push link_dest arguments onto cmd stack
+-				} else {
+-					push(
+-						@rsync_long_args_stack,
+-						"--link-dest=$config_vars{'snapshot_root'}/$interval_link_dest.$interval_num_link_dest/$$bp_ref{'dest'}"
+-					);
+-				}
+-			}
++			# push link_dest arguments onto cmd stack
++			push(
++				@rsync_long_args_stack,
++				"--link-dest=$config_vars{'snapshot_root'}/$interval_link_dest.$interval_num_link_dest/$$bp_ref{'dest'}"
++			);
+ 		}
+ 	}
+ 	
+@@ -3586,7 +3534,7 @@ sub rsync_backup_point {
+ 	#
+ 	if (
+ 		(1 == $link_dest) &&
+-		(is_file($$bp_ref{'src'})) &&
++		(is_file($src)) &&
+ 		defined($interval_link_dest) &&
+ 		defined($interval_num_link_dest) &&
+ 		(-f "$config_vars{'snapshot_root'}/$interval_link_dest.$interval_num_link_dest/$$bp_ref{'dest'}")
+@@ -3616,36 +3564,9 @@ sub rsync_backup_point {
+ 		}
+ 	}
+ 	
+-	# figure out if we're using the --relative flag to rsync.
+-	# this influences how the source paths are constructed below.
+-	foreach my $rsync_long_arg (@rsync_long_args_stack) {
+-		if (defined($rsync_long_arg)) {
+-			if ('--relative' eq $rsync_long_arg) {
+-				$using_relative = 1;
+-			}
+-		}
+-	}
+-	
+-	if (defined($$bp_ref{'src'})) {
+-		# make sure that the source path doesn't have a trailing slash if we're using the --relative flag
+-		# this is to work around a bug in most versions of rsync that don't properly delete entries
+-		# when the --relative flag is set.
+-		#
+-		if (1 == $using_relative) {
+-			$src = remove_trailing_slash( "$$bp_ref{'src'}" );
+-			$src = add_slashdot_if_root( "$src" );
+-			
+-		# no matter what, we need a source path
+-		} else {
+-			# put a trailing slash on it if we know it's a directory and it doesn't have one
+-			if ((-d "$$bp_ref{'src'}") && ($$bp_ref{'src'} !~ /\/$/)) {
+-				$src = $$bp_ref{'src'} . '/';
+-				
+-			# just use it as-is
+-			} else {
+-				$src = $$bp_ref{'src'};
+-			}
+-		}
++	# put a trailing slash on the source if we know it's a directory and it doesn't have one
++	if ((-d "$src") && ($$bp_ref{'src'} !~ /\/$/)) {
++		$src .= '/';
+ 	}
+ 	
+ 	# BEGIN RSYNC COMMAND ASSEMBLY
+@@ -3692,8 +3613,7 @@ sub rsync_backup_point {
+ 	$result = 1;
+ 	if (0 == $test) {
+ 		while ($tryCount < $rsync_numtries && $result !=0) {
+-			# join is Michael Ashley's fix for some filter/space problems		
+-			$result = system(join(' ', @cmd_stack));
++			$result = system(@cmd_stack);
+ 			$tryCount += 1;
+ 		}
+ 
+@@ -3722,15 +3642,13 @@ sub rsync_backup_point {
+         }
+ 
+         @cmd_stack = ();
+-        push(@cmd_stack, $config_vars{'linux_lvm_cmd_umount'});
++        push(@cmd_stack, split(' ', $config_vars{'linux_lvm_cmd_umount'}));
+ 
+         push(@cmd_stack, $config_vars{'linux_lvm_mountpath'});
+         
+         print_cmd(@cmd_stack);
+         if (0 == $test) {
+-            # silence gratuitous lvremove output
+-            #$result = system(@cmd_stack);
+-            $result = system(join " ", @cmd_stack, ">/dev/null");
++            $result = system(@cmd_stack);
+             
+             if ($result != 0) {
+                 bail("Unmount LVM snapshot failed: $result");
+@@ -3745,7 +3663,9 @@ sub rsync_backup_point {
+         
+         print_cmd(@cmd_stack);
+         if (0 == $test) {
+-            $result = system(@cmd_stack);
++            # silence gratuitous lvremove output
++            #$result = system(@cmd_stack);
++            $result = system(join " ", @cmd_stack, ">/dev/null");
+             
+             if ($result != 0) {
+                 bail("Removal of LVM snapshot failed: $result");
+@@ -3769,18 +3689,21 @@ sub split_long_args_with_quotes {
+ 		$#stack++;
+ 	        next;
+             # not in quotes and got a quote? remember that we're in quotes
+-            } elsif($thischar =~ /['"]/ && !$inquotes) {
++	    # NB the unnecessary \ are to appease emacs
++            } elsif($thischar =~ /[\'\"]/ && !$inquotes) {
+ 	        $inquotes = $thischar;
+             # in quotes and got a different quote? no nesting allowed
+-            } elsif($thischar =~ /['"]/ && $inquotes ne $thischar) {
++	    #   more emacs appeasement
++            } elsif($thischar =~ /[\'\"]/ && $inquotes ne $thischar) {
+ 	        print_err("Nested quotes not allowed in $argname", 1);
+ 	        syslog_err("Nested quotes not allowed in $argname");
+ 		exit(1);
+         # in quotes and got a close quote
+ 	    } elsif($thischar eq $inquotes) {
+ 	        $inquotes = '';
+-            }
+-	    $stack[-1] .= $thischar;
++            } else {
++	        $stack[-1] .= $thischar;
++	    }
+ 	}
+ 	if($inquotes) {
+ 	    print_err("Unbalanced quotes in $argname", 1);
+@@ -4236,7 +4159,7 @@ sub touch_interval_dir {
+ 
+ # accepts an interval_data_ref
+ # looks at $$id_ref{'interval'} as the interval to act on,
+-# and the previous interval $$id_ref{'prev_interval'} to pull up the directory from (e.g., daily, hourly)
++# and the previous interval $$id_ref{'prev_interval'} to pull up the directory from (e.g., beta, alpha)
+ # the interval being acted upon should not be the lowest one.
+ #
+ # rotates older dirs within this interval, and hard links
+@@ -4333,7 +4256,7 @@ sub rotate_higher_interval {
+ 		# or if the previous interval isn't the smallest one,
+ 		# move the last one up a level
+ 		if (($prev_interval_max >= 1) or ($interval_num >= 2)) {
+-			# mv hourly.5 to daily.0 (or whatever intervals we're using)
++			# mv alpha.5 to beta.0 (or whatever intervals we're using)
+ 			print_cmd(
+ 				"mv $config_vars{'snapshot_root'}/$prev_interval.$prev_interval_max/ ",
+ 				"$config_vars{'snapshot_root'}/$interval.0/"
+@@ -4356,7 +4279,7 @@ sub rotate_higher_interval {
+ 			exit(1);
+ 		}
+ 	} else {
+-		print_msg("$config_vars{'snapshot_root'}/$prev_interval.$prev_interval_max not present (yet), nothing to copy", 3);
++		print_msg("$config_vars{'snapshot_root'}/$prev_interval.$prev_interval_max not present (yet), nothing to copy", 2);
+ 	}
+ }
+ 
+@@ -4408,6 +4331,29 @@ sub cp_al {
+ 	return ($result);
+ }
+ 
++# This is to test whether cp -al seems to work in a simple case
++# return 0  if cp -al succeeds
++# return 1  if cp -al fails
++# return -1 if something else failed - test inconclusive
++sub test_cp_al {
++	my $s = "$config_vars{'snapshot_root'}/cp_al1";
++	my $d = "$config_vars{'snapshot_root'}/cp_al2";
++	my $result;
++
++	-d $s || mkdir($s) || return (-1);
++	open(TT1, ">>$s/tt1") || return (-1);
++	close(TT1) || return (-1);
++	$result = system( $config_vars{'cmd_cp'}, '-al', "$s", "$d" );
++	if ($result != 0) {
++		return (1);
++	}
++	unlink("$d/tt1");
++	unlink("$s/tt1");
++	rmdir($d);
++	rmdir($s);
++	return (0);
++}
++
+ # this is a wrapper to call the GNU version of "cp"
+ # it might fail in mysterious ways if you have a different version of "cp"
+ #
+@@ -4434,7 +4380,10 @@ sub gnu_cp_al {
+ 	$result = system( $config_vars{'cmd_cp'}, '-al', "$src", "$dest" );
+ 	if ($result != 0) {
+ 		$status = $result >> 8;
+-		print_err("$config_vars{'cmd_cp'} -al $src $dest failed (result $result, exit status $status).  Perhaps your cp does not support -al options?", 2);
++		print_err("$config_vars{'cmd_cp'} -al $src $dest failed (result $result, exit status $status).", 2);
++		if (test_cp_al() > 0 ) {
++			print_err("Perhaps your cp does not support -al options?", 2);
++		}
+ 		return (0);
+ 	}
+ 	
+@@ -4728,8 +4677,7 @@ sub rsync_cleanup_after_native_cp_al {
+ 	print_cmd(@cmd_stack);
+ 	
+ 	if (0 == $test) {
+-                # join is Michael Ashley's fix for some filter/space problems
+-		my $result = system(join(' ', @cmd_stack));
++		my $result = system(@cmd_stack);
+ 		
+ 		if ($result != 0) {
+ 			# bitmask return value
+@@ -4783,7 +4731,7 @@ sub rm_rf {
+ 	
+ 	# extra bonus safety feature!
+ 	# confirm that whatever we're deleting must be inside the snapshot_root
+-	if ("$path" !~ m/^$config_vars{'snapshot_root'}/o) {
++	if (index($path, $config_vars{'snapshot_root'}) != 0) { 
+ 		bail("rm_rf() tried to delete something outside of $config_vars{'snapshot_root'}! Quitting now!");
+ 	}
+ 	
+@@ -4832,9 +4780,9 @@ sub cmd_rm_rf {
+ # that's why the print_* subroutines aren't used here.
+ #
+ sub show_disk_usage {
+-	my $intervals_str = '';
++	my @du_dirs = ();
+ 	my $cmd_du	= 'du';
+-	my $du_args	= '-csh';
++	my $du_args	= $default_du_args;
+ 	my $dest_path = '';
+ 	my $retval;
+ 	
+@@ -4867,7 +4815,7 @@ sub show_disk_usage {
+ 			print STDERR "ERROR: Directory traversal is not allowed\n";
+ 			exit(1);
+ 		}
+-		if (is_valid_local_abs_path($dest_path)) {
++		if (! is_valid_local_non_abs_path($dest_path)) {
+ 			print STDERR "ERROR: Full paths are not allowed\n";
+ 			exit(1);
+ 		}
+@@ -4879,7 +4827,7 @@ sub show_disk_usage {
+ 		# if we have a .sync directory, that will have the most recent files, and should be first
+ 		if (-d "$config_vars{'snapshot_root'}/.sync") {
+ 			if (-r "$config_vars{'snapshot_root'}/.sync") {
+-				$intervals_str .= "$config_vars{'snapshot_root'}/.sync ";
++				push(@du_dirs, "$config_vars{'snapshot_root'}/.sync");
+ 			}
+ 		}
+ 		
+@@ -4890,22 +4838,24 @@ sub show_disk_usage {
+ 			
+ 			for (my $i=0; $i < $max_interval_num; $i++) {
+ 				if (-r "$config_vars{'snapshot_root'}/$interval.$i/$dest_path") {
+-					$intervals_str .= "$config_vars{'snapshot_root'}/$interval.$i/$dest_path ";
++					push(@du_dirs, "$config_vars{'snapshot_root'}/$interval.$i/$dest_path");
+ 				}
+ 			}
+ 		}
+ 	}
+-	chop($intervals_str);
+ 	
+ 	# if we can see any of the intervals, find out how much space they're taking up
+ 	# most likely we can either see all of them or none at all
+-	if ('' ne $intervals_str) {
++	if (scalar(@du_dirs) > 0) {
++		my @cmd_stack = ($cmd_du,
++			split_long_args_with_quotes('du_args', $du_args),
++			@du_dirs);
+ 		if (defined($verbose) && ($verbose >= 3)) {
+-			print wrap_cmd("$cmd_du $du_args $intervals_str"), "\n\n";
++			print wrap_cmd(join(' ', @cmd_stack)), "\n\n";
+ 		}
+ 		
+ 		if (0 == $test) {
+-			$retval = system("$cmd_du $du_args $intervals_str");
++			$retval = system(@cmd_stack);
+ 			if (0 == $retval) {
+ 				# exit showing success
+ 				exit(0);
+@@ -4929,7 +4879,7 @@ sub show_disk_usage {
+ 	exit(1);
+ }
+ 
+-# accept two args from $ARGV[1] and [2], like "daily.0" "daily.1" etc.
++# accept two args from $ARGV[1] and [2], like "beta.0" "beta.1" etc.
+ # stick the full snapshot_root path on the beginning, and call rsnapshot-diff with these args
+ # NOTE: since this is a read-only operation, we're not concerned with directory traversals and relative paths
+ sub show_rsnapshot_diff {
+@@ -5469,6 +5419,11 @@ sub copy_symlink {
+ 	# This is done in two steps:
+ 	# Reading/dereferencing the link, and creating a new one
+ 	#
++	# Why not just hard link the symlink?
++	# see http://www.rsnapshot.org/security/2005/001.html
++	# and also msgid <5036B23B.3000606@scubaninja.com> on
++	# rsnapshot-discuss, on 2012-08-23
++	#
+ 	# Step 1: READ THE LINK
+ 	if (($verbose > 4) or ($loglevel > 4)) {
+ 		my $cmd_string = "readlink(\"$src\")\n";
+@@ -6217,7 +6172,8 @@ B<linux_lvm_cmd_umount>
+ =over 4
+ 
+ Paths to lvcreate, lvremove, mount and umount commands, for use with Linux
+-LVMs.  The lvcreate, lvremove, mount and umount commands are required for
++LVMs.  You may include options to the commands also. 
++The lvcreate, lvremove, mount and umount commands are required for
+ managing snapshots of LVM volumes and are otherwise optional.
+ 
+ =back
+@@ -6226,7 +6182,7 @@ B<retain>             [name]   [number]
+ 
+ =over 4
+ 
+-"name" refers to the name of this backup level (e.g., hourly, daily,
++"name" refers to the name of this backup level (e.g., alpha, beta,
+ so also called the 'interval'). "number"
+ is the number of snapshots for this type of interval that will be retained.
+ The value of "name" will be the command passed to B<rsnapshot> to perform
+@@ -6234,43 +6190,43 @@ this type of backup.
+ 
+ A deprecated alias for 'retain' is 'interval'.
+ 
+-Example: B<retain hourly 6>
++Example: B<retain alpha 6>
+ 
+-[root@localhost]# B<rsnapshot hourly>
++[root@localhost]# B<rsnapshot alpha>
+ 
+ For this example, every time this is run, the following will happen:
+ 
+-<snapshot_root>/hourly.5/ will be deleted, if it exists.
++<snapshot_root>/alpha.5/ will be deleted, if it exists.
+ 
+-<snapshot_root>/hourly.{1,2,3,4} will all be rotated +1, if they exist.
++<snapshot_root>/alpha.{1,2,3,4} will all be rotated +1, if they exist.
+ 
+-<snapshot_root>/hourly.0/ will be copied to <snapshot_root>/hourly.1/
++<snapshot_root>/alpha.0/ will be copied to <snapshot_root>/alpha.1/
+ using hard links.
+ 
+ Each backup point (explained below) will then be rsynced to the
+-corresponding directories in <snapshot_root>/hourly.0/
++corresponding directories in <snapshot_root>/alpha.0/
+ 
+ Backup levels must be specified in the config file in order, from most
+ frequent to least frequent. The first entry is the one which will be
+-synced with the backup points. The subsequent backup levels (e.g., daily,
+-weekly, etc) simply rotate, with each higher backup level pulling from the
++synced with the backup points. The subsequent backup levels (e.g., beta,
++gamma, etc) simply rotate, with each higher backup level pulling from the
+ one below it for its .0 directory.
+ 
+ Example:
+ 
+ =over 4
+ 
+-B<retain  hourly 6>
++B<retain  alpha 6>
+ 
+-B<retain  daily  7>
++B<retain  beta  7>
+ 
+-B<retain  weekly 4>
++B<retain  gamma 4>
+ 
+ =back
+ 
+-daily.0/ will be copied from hourly.5/, and weekly.0/ will be copied from daily.6/
++beta.0/ will be copied from alpha.5/, and gamma.0/ will be copied from beta.6/
+ 
+-hourly.0/ will be rsynced directly from the filesystem.
++alpha.0/ will be rsynced directly from the filesystem.
+ 
+ =back
+ 
+@@ -6398,21 +6354,10 @@ B<rsync_long_args     --delete --numeric-ids --relative --delete-excluded>
+ 
+ =over 4
+ 
+-List of long arguments to pass to rsync. Beginning with rsnapshot 1.2.0, this
+-default has changed. In previous versions, the default values were
+-
+-    --delete --numeric-ids
+-
+-Starting with version 1.2.0, the default values are
+-
++List of long arguments to pass to rsync.  The default values are
+     --delete --numeric-ids --relative --delete-excluded
+-
+-This directly affects how the destination paths in your backup points are
+-constructed. Depending on what behaviour you want, you can explicitly set
+-the values to make the program behave like the old version or the current
+-version. The newer settings are recommended if you're just starting. If
+-you are upgrading, read the upgrade guide in the INSTALL file in the
+-source distribution for more information.
++This means that the directory structure in each backup point destination 
++will match that in the backup point source.
+ 
+ Quotes are permitted in rsync_long_args, eg --rsync-path="sudo /usr/bin/rsync".
+ You may use either single (') or double (") quotes, but nested quotes (including
+@@ -6488,7 +6433,7 @@ disk space. The default is 0 (off).
+ 
+ The details of how this works have changed in rsnapshot version 1.3.1.
+ Originally you could only ever have one .delete directory per backup level.
+-Now you can have many, so if your next (eg) hourly backup kicks off while the
++Now you can have many, so if your next (eg) alpha backup kicks off while the
+ previous one is still doing a lazy delete you may temporarily have extra
+ _delete directories hanging around.
+ 
+@@ -6526,17 +6471,6 @@ Mount point to use to temporarily mount the snapshot(s).
+ 
+ =back
+ 
+-
+-B<UPGRADE NOTICE:>
+-
+-=over 4
+-
+-If you have used an older version of rsnapshot, you might notice that the
+-destination paths on the backup points have changed. Please read the INSTALL
+-file in the source distribution for upgrade options.
+-
+-=back
+-
+ B<backup>  /etc/                       localhost/
+ 
+ B<backup>  root@example.com:/etc/      example.com/
+@@ -6580,6 +6514,15 @@ using rsync over ssh
+ 
+ =back
+ 
++B<backup   example.com:/etc/       example.com/>
++
++=over 4
++
++Same thing but let ssh choose the remote username (as specified in
++~/.ssh/config, otherwise the same as the local username)
++
++=back
++
+ B<backup   root@example.com:/usr/local/ example.com/>
+ 
+ =over 4
+@@ -6699,10 +6642,10 @@ Putting it all together (an example file):
+     linux_lvm_vgpath          /dev
+     linux_lvm_mountpath       /mnt/lvm-snapshot
+ 
+-    retain              hourly  6
+-    retain              daily   7
+-    retain              weekly  7
+-    retain              monthly 3
++    retain              alpha  6
++    retain              beta   7
++    retain              gamma  7
++    retain              delta 3
+ 
+     backup              /etc/                     localhost/
+     backup              /home/                    localhost/
+@@ -6716,6 +6659,8 @@ Putting it all together (an example file):
+ 
+ =back
+ 
++=back
++
+ =head1 USAGE
+ 
+ B<rsnapshot> can be used by any user, but for system-wide backups
+@@ -6728,18 +6673,18 @@ When you are first setting up your backups, you will probably
+ also want to run it from the command line once or twice to get
+ a feel for what it's doing.
+ 
+-Here is an example crontab entry, assuming that backup levels B<hourly>,
+-B<daily>, B<weekly> and B<monthly> have been defined in B</etc/rsnapshot.conf>
++Here is an example crontab entry, assuming that backup levels B<alpha>,
++B<beta>, B<gamma> and B<delta> have been defined in B</etc/rsnapshot.conf>
+ 
+ =over 4
+ 
+-B<0 */4 * * *         /usr/local/bin/rsnapshot hourly>
++B<0 */4 * * *         /usr/local/bin/rsnapshot alpha>
+ 
+-B<50 23 * * *         /usr/local/bin/rsnapshot daily>
++B<50 23 * * *         /usr/local/bin/rsnapshot beta>
+ 
+-B<40 23 * * 6         /usr/local/bin/rsnapshot weekly>
++B<40 23 * * 6         /usr/local/bin/rsnapshot gamma>
+ 
+-B<30 23 1 * *         /usr/local/bin/rsnapshot monthly>
++B<30 23 1 * *         /usr/local/bin/rsnapshot delta>
+ 
+ =back
+ 
+@@ -6747,30 +6692,30 @@ This example will do the following:
+ 
+ =over 4
+ 
+-6 hourly backups a day (once every 4 hours, at 0,4,8,12,16,20)
++6 alpha backups a day (once every 4 hours, at 0,4,8,12,16,20)
+ 
+-1 daily backup every day, at 11:50PM
++1 beta backup every day, at 11:50PM
+ 
+-1 weekly backup every week, at 11:40PM, on Saturdays (6th day of week)
++1 gamma backup every week, at 11:40PM, on Saturdays (6th day of week)
+ 
+-1 monthly backup every month, at 11:30PM on the 1st day of the month
++1 delta backup every month, at 11:30PM on the 1st day of the month
+ 
+ =back
+ 
+ It is usually a good idea to schedule the larger backup levels to run a bit before the
+-lower ones. For example, in the crontab above, notice that "daily" runs 10 minutes
+-before "hourly".  The main reason for this is that the daily rotate will
+-pull out the oldest hourly and make that the youngest daily (which means
+-that the next hourly rotate will not need to delete the oldest hourly),
++lower ones. For example, in the crontab above, notice that "beta" runs 10 minutes
++before "alpha".  The main reason for this is that the beta rotate will
++pull out the oldest alpha and make that the youngest beta (which means
++that the next alpha rotate will not need to delete the oldest alpha),
+ which is more efficient.  A secondary reason is that it is harder to
+ predict how long the lowest backup level will take, since it needs to actually
+ do an rsync of the source as well as the rotate that all backups do.
+ 
+-If rsnapshot takes longer than 10 minutes to do the "daily" rotate
+-(which usually includes deleting the oldest daily snapshot), then you
++If rsnapshot takes longer than 10 minutes to do the "beta" rotate
++(which usually includes deleting the oldest beta snapshot), then you
+ should increase the time between the backup levels.
+ Otherwise (assuming you have set the B<lockfile> parameter, as is recommended)
+-your hourly snapshot will fail sometimes because the daily still has the lock.  
++your alpha snapshot will fail sometimes because the beta still has the lock.  
+ 
+ Remember that these are just the times that the program runs.
+ To set the number of backups stored, set the B<retain> numbers in
+@@ -6812,11 +6757,11 @@ For example:
+ 
+ =over 4
+ 
+-B<rsnapshot diff daily.0 daily.1>
++B<rsnapshot diff beta.0 beta.1>
+ 
+-B<rsnapshot diff daily.0/localhost/etc daily.1/localhost/etc>
++B<rsnapshot diff beta.0/localhost/etc beta.1/localhost/etc>
+ 
+-B<rsnapshot diff /.snapshots/daily.0 /.snapshots/daily.1>
++B<rsnapshot diff /.snapshots/beta.0 /.snapshots/beta.1>
+ 
+ =back
+ 
+@@ -6833,13 +6778,13 @@ the lowest, most frequent backup level, and right before. For example:
+ 
+ =over 4
+ 
+-B<0 */4 * * *         /usr/local/bin/rsnapshot sync && /usr/local/bin/rsnapshot hourly>
++B<0 */4 * * *         /usr/local/bin/rsnapshot sync && /usr/local/bin/rsnapshot alpha>
+ 
+-B<50 23 * * *         /usr/local/bin/rsnapshot daily>
++B<50 23 * * *         /usr/local/bin/rsnapshot beta>
+ 
+-B<40 23 1,8,15,22 * * /usr/local/bin/rsnapshot weekly>
++B<40 23 1,8,15,22 * * /usr/local/bin/rsnapshot gamma>
+ 
+-B<30 23 1 * *         /usr/local/bin/rsnapshot monthly>
++B<30 23 1 * *         /usr/local/bin/rsnapshot delta>
+ 
+ =back
+ 
+@@ -6990,17 +6935,17 @@ you will need to go into the <snapshot_root> directory and manually
+ remove the files from the smallest backup level's ".0" directory.
+ 
+ For example, if you were previously backing up /home/ with a destination
+-of localhost/, and hourly is your smallest backup level, you would need to do
++of localhost/, and alpha is your smallest backup level, you would need to do
+ the following to reclaim that disk space:
+ 
+ =over 4
+ 
+-rm -rf <snapshot_root>/hourly.0/localhost/home/
++rm -rf <snapshot_root>/alpha.0/localhost/home/
+ 
+ =back
+ 
+ Please note that the other snapshots previously made of /home/ will still
+-be using that disk space, but since the files are flushed out of hourly.0/,
++be using that disk space, but since the files are flushed out of alpha.0/,
+ they will no longer be copied to the subsequent directories, and will thus
+ be removed in due time as the rotations happen.
+ 
+@@ -7020,7 +6965,7 @@ Nathan Rosenquist (B<nathan@rsnapshot.org>)
+ =over 4
+ 
+ =item -
+-Primary author and previous maintainer of rsnapshot.
++Primary author and original maintainer of rsnapshot.
+ 
+ =back
+ 
+@@ -7029,7 +6974,7 @@ David Cantrell (B<david@cantrell.org.uk>)
+ =over 4
+ 
+ =item -
+-Current co-maintainer of rsnapshot
++Previous maintainer of rsnapshot
+ 
+ =item -
+ Wrote the rsnapshot-diff utility
+@@ -7045,7 +6990,7 @@ David Keegel <djk@cybersource.com.au>
+ =over 4
+ 
+ =item -
+-Co-maintainer, with responsibility for release management since 1.2.9
++Current rsnapshot maintainer
+ 
+ =item -
+ Fixed race condition in lock file creation, improved error reporting
+@@ -7267,3 +7212,8 @@ with this program; if not, write to the Free Software Foundation, Inc.,
+ 
+ =cut
+ 
++# more emacs-appeasement
++######################################################################
++### Local Variables:
++### tab-width: 4
++### End:
+diff --git a/rsnapshot.1 b/rsnapshot.1
+index 4e9a06a..fd2288c 100644
+--- a/rsnapshot.1
++++ b/rsnapshot.1
+@@ -1,4 +1,4 @@
+-.\" Automatically generated by Pod::Man v1.37, Pod::Parser v1.14
++.\" Automatically generated by Pod::Man 2.16 (Pod::Simple 3.05)
+ .\"
+ .\" Standard preamble:
+ .\" ========================================================================
+@@ -25,11 +25,11 @@
+ ..
+ .\" Set up some character translations and predefined strings.  \*(-- will
+ .\" give an unbreakable dash, \*(PI will give pi, \*(L" will give a left
+-.\" double quote, and \*(R" will give a right double quote.  | will give a
+-.\" real vertical bar.  \*(C+ will give a nicer C++.  Capital omega is used to
+-.\" do unbreakable dashes and therefore won't be available.  \*(C` and \*(C'
+-.\" expand to `' in nroff, nothing in troff, for use with C<>.
+-.tr \(*W-|\(bv\*(Tr
++.\" double quote, and \*(R" will give a right double quote.  \*(C+ will
++.\" give a nicer C++.  Capital omega is used to do unbreakable dashes and
++.\" therefore won't be available.  \*(C` and \*(C' expand to `' in nroff,
++.\" nothing in troff, for use with C<>.
++.tr \(*W-
+ .ds C+ C\v'-.1v'\h'-1p'\s-2+\h'-1p'+\s0\v'.1v'\h'-1p'
+ .ie n \{\
+ .    ds -- \(*W-
+@@ -48,22 +48,25 @@
+ .    ds R" ''
+ 'br\}
+ .\"
++.\" Escape single quotes in literal strings from groff's Unicode transform.
++.ie \n(.g .ds Aq \(aq
++.el       .ds Aq '
++.\"
+ .\" If the F register is turned on, we'll generate index entries on stderr for
+ .\" titles (.TH), headers (.SH), subsections (.Sh), items (.Ip), and index
+ .\" entries marked with X<> in POD.  Of course, you'll have to process the
+ .\" output yourself in some meaningful fashion.
+-.if \nF \{\
++.ie \nF \{\
+ .    de IX
+ .    tm Index:\\$1\t\\n%\t"\\$2"
+ ..
+ .    nr % 0
+ .    rr F
+ .\}
+-.\"
+-.\" For nroff, turn off justification.  Always turn off hyphenation; it makes
+-.\" way too many mistakes in technical documents.
+-.hy 0
+-.if n .na
++.el \{\
++.    de IX
++..
++.\}
+ .\"
+ .\" Accent mark definitions (@(#)ms.acc 1.5 88/02/08 SMI; from UCB 4.2).
+ .\" Fear.  Run.  Save yourself.  No user-serviceable parts.
+@@ -128,8 +131,12 @@
+ .rm #[ #] #H #V #F C
+ .\" ========================================================================
+ .\"
+-.IX Title "rsnapshot 1"
+-.TH rsnapshot 1 "2008-08-31" "" ""
++.IX Title "RSNAPSHOT-PROGRAM 1"
++.TH RSNAPSHOT-PROGRAM 1 "2010-03-17" "perl v5.10.0" "User Contributed Perl Documentation"
++.\" For nroff, turn off justification.  Always turn off hyphenation; it makes
++.\" way too many mistakes in technical documents.
++.if n .ad l
++.nh
+ .SH "NAME"
+ rsnapshot \- remote filesystem snapshot utility
+ .SH "SYNOPSIS"
+@@ -275,7 +282,8 @@ rotations).
+ .Sp
+ .RS 4
+ Paths to lvcreate, lvremove, mount and umount commands, for use with Linux
+-LVMs.  The lvcreate, lvremove, mount and umount commands are required for
++LVMs.  You may include options to the commands also. 
++The lvcreate, lvremove, mount and umount commands are required for
+ managing snapshots of \s-1LVM\s0 volumes and are otherwise optional.
+ .RE
+ .RE
+@@ -284,7 +292,7 @@ managing snapshots of \s-1LVM\s0 volumes and are otherwise optional.
+ \&\fBretain\fR             [name]   [number]
+ .Sp
+ .RS 4
+-\&\*(L"name\*(R" refers to the name of this backup level (e.g., hourly, daily,
++\&\*(L"name\*(R" refers to the name of this backup level (e.g., alpha, beta,
+ so also called the 'interval'). \*(L"number\*(R"
+ is the number of snapshots for this type of interval that will be retained.
+ The value of \*(L"name\*(R" will be the command passed to \fBrsnapshot\fR to perform
+@@ -292,43 +300,43 @@ this type of backup.
+ .Sp
+ A deprecated alias for 'retain' is 'interval'.
+ .Sp
+-Example: \fBretain hourly 6\fR
++Example: \fBretain alpha 6\fR
+ .Sp
+-[root@localhost]# \fBrsnapshot hourly\fR
++[root@localhost]# \fBrsnapshot alpha\fR
+ .Sp
+ For this example, every time this is run, the following will happen:
+ .Sp
+-<snapshot_root>/hourly.5/ will be deleted, if it exists.
++<snapshot_root>/alpha.5/ will be deleted, if it exists.
+ .Sp
+-<snapshot_root>/hourly.{1,2,3,4} will all be rotated +1, if they exist.
++<snapshot_root>/alpha.{1,2,3,4} will all be rotated +1, if they exist.
+ .Sp
+-<snapshot_root>/hourly.0/ will be copied to <snapshot_root>/hourly.1/
++<snapshot_root>/alpha.0/ will be copied to <snapshot_root>/alpha.1/
+ using hard links.
+ .Sp
+ Each backup point (explained below) will then be rsynced to the
+-corresponding directories in <snapshot_root>/hourly.0/
++corresponding directories in <snapshot_root>/alpha.0/
+ .Sp
+ Backup levels must be specified in the config file in order, from most
+ frequent to least frequent. The first entry is the one which will be
+-synced with the backup points. The subsequent backup levels (e.g., daily,
+-weekly, etc) simply rotate, with each higher backup level pulling from the
++synced with the backup points. The subsequent backup levels (e.g., beta,
++gamma, etc) simply rotate, with each higher backup level pulling from the
+ one below it for its .0 directory.
+ .Sp
+ Example:
+ .Sp
+ .RS 4
+-\&\fBretain  hourly 6\fR
++\&\fBretain  alpha 6\fR
+ .Sp
+-\&\fBretain  daily  7\fR
++\&\fBretain  beta  7\fR
+ .Sp
+-\&\fBretain  weekly 4\fR
++\&\fBretain  gamma 4\fR
+ .RE
+ .RE
+ .RS 4
+ .Sp
+-daily.0/ will be copied from hourly.5/, and weekly.0/ will be copied from daily.6/
++beta.0/ will be copied from alpha.5/, and gamma.0/ will be copied from beta.6/
+ .Sp
+-hourly.0/ will be rsynced directly from the filesystem.
++alpha.0/ will be rsynced directly from the filesystem.
+ .RE
+ .RE
+ .RS 4
+@@ -458,25 +466,10 @@ backups, then add \*(L"H\*(R" to this.
+ \&\fBrsync_long_args     \-\-delete \-\-numeric\-ids \-\-relative \-\-delete\-excluded\fR
+ .Sp
+ .RS 4
+-List of long arguments to pass to rsync. Beginning with rsnapshot 1.2.0, this
+-default has changed. In previous versions, the default values were
+-.Sp
+-.Vb 1
+-\&    --delete --numeric-ids
+-.Ve
+-.Sp
+-Starting with version 1.2.0, the default values are
+-.Sp
+-.Vb 1
+-\&    --delete --numeric-ids --relative --delete-excluded
+-.Ve
+-.Sp
+-This directly affects how the destination paths in your backup points are
+-constructed. Depending on what behaviour you want, you can explicitly set
+-the values to make the program behave like the old version or the current
+-version. The newer settings are recommended if you're just starting. If
+-you are upgrading, read the upgrade guide in the \s-1INSTALL\s0 file in the
+-source distribution for more information.
++List of long arguments to pass to rsync.  The default values are
++    \-\-delete \-\-numeric\-ids \-\-relative \-\-delete\-excluded
++This means that the directory structure in each backup point destination 
++will match that in the backup point source.
+ .Sp
+ Quotes are permitted in rsync_long_args, eg \-\-rsync\-path=\*(L"sudo /usr/bin/rsync\*(R".
+ You may use either single (') or double (") quotes, but nested quotes (including
+@@ -552,7 +545,7 @@ disk space. The default is 0 (off).
+ .Sp
+ The details of how this works have changed in rsnapshot version 1.3.1.
+ Originally you could only ever have one .delete directory per backup level.
+-Now you can have many, so if your next (eg) hourly backup kicks off while the
++Now you can have many, so if your next (eg) alpha backup kicks off while the
+ previous one is still doing a lazy delete you may temporarily have extra
+ _delete directories hanging around.
+ .RE
+@@ -586,17 +579,7 @@ Path to the \s-1LVM\s0 Volume Groups.
+ \&\fBlinux_lvm_mountpath		/mnt/lvm\-snapshot\fR
+ .Sp
+ .RS 4
+-Mount point to use to temporarily mount the snapshot(s). 
+-.RE
+-.RE
+-.RS 4
+-.Sp
+-\&\fB\s-1UPGRADE\s0 \s-1NOTICE:\s0\fR
+-.Sp
+-.RS 4
+-If you have used an older version of rsnapshot, you might notice that the
+-destination paths on the backup points have changed. Please read the \s-1INSTALL\s0
+-file in the source distribution for upgrade options.
++Mount point to use to temporarily mount the snapshot(s).
+ .RE
+ .RE
+ .RS 4
+@@ -643,6 +626,15 @@ using rsync over ssh
+ .RE
+ .RS 4
+ .Sp
++\&\fBbackup   example.com:/etc/       example.com/\fR
++.Sp
++.RS 4
++Same thing but let ssh choose the remote username (as specified in
++~/.ssh/config, otherwise the same as the local username)
++.RE
++.RE
++.RS 4
++.Sp
+ \&\fBbackup   root@example.com:/usr/local/ example.com/\fR
+ .Sp
+ .RS 4
+@@ -739,168 +731,143 @@ Putting it all together (an example file):
+ .Sp
+ .Vb 1
+ \&    # THIS IS A COMMENT, REMEMBER TABS MUST SEPARATE ALL ELEMENTS
+-.Ve
+-.Sp
+-.Vb 1
++\&
+ \&    config_version  1.2
+-.Ve
+-.Sp
+-.Vb 1
++\&
+ \&    snapshot_root   /.snapshots/
+-.Ve
+-.Sp
+-.Vb 6
++\&
+ \&    cmd_rsync           /usr/bin/rsync
+ \&    cmd_ssh             /usr/bin/ssh
+ \&    #cmd_cp             /bin/cp
+ \&    cmd_rm              /bin/rm
+ \&    cmd_logger          /usr/bin/logger
+ \&    cmd_du              /usr/bin/du
+-.Ve
+-.Sp
+-.Vb 4
++\&
+ \&    linux_lvm_cmd_lvcreate        /sbin/lvcreate
+ \&    linux_lvm_cmd_lvremove        /sbin/lvremove
+ \&    linux_lvm_cmd_mount           /bin/mount
+ \&    linux_lvm_cmd_umount          /bin/umount
+-.Ve
+-.Sp
+-.Vb 4
++\&
+ \&    linux_lvm_snapshotsize    2G
+ \&    linux_lvm_snapshotname    rsnapshot
+ \&    linux_lvm_vgpath          /dev
+-\&    linux_lvm_mountpath       /mnt/lvm-snapshot
+-.Ve
+-.Sp
+-.Vb 4
+-\&    retain              hourly  6
+-\&    retain              daily   7
+-\&    retain              weekly  7
+-\&    retain              monthly 3
+-.Ve
+-.Sp
+-.Vb 3
++\&    linux_lvm_mountpath       /mnt/lvm\-snapshot
++\&
++\&    retain              alpha  6
++\&    retain              beta   7
++\&    retain              gamma  7
++\&    retain              delta 3
++\&
+ \&    backup              /etc/                     localhost/
+ \&    backup              /home/                    localhost/
+ \&    backup_script       /usr/local/bin/backup_mysql.sh  mysql_backup/
+-.Ve
+-.Sp
+-.Vb 5
++\&
+ \&    backup              root@foo.com:/etc/        foo.com/
+ \&    backup              root@foo.com:/home/       foo.com/
+ \&    backup              root@mail.foo.com:/home/  mail.foo.com/
+ \&    backup              rsync://example.com/pub/  example.com/pub/
+-\&    backup              lvm://vg0/xen-home/       lvm-vg0/xen-home/
++\&    backup              lvm://vg0/xen\-home/       lvm\-vg0/xen\-home/
+ .Ve
+ .RE
+ .RS 4
++.RE
+ .SH "USAGE"
+ .IX Header "USAGE"
+ \&\fBrsnapshot\fR can be used by any user, but for system-wide backups
+ you will probably want to run it as root.
+-.Sp
++.PP
+ Since backups usually get neglected if human intervention is
+ required, the preferred way is to run it from cron.
+-.Sp
++.PP
+ When you are first setting up your backups, you will probably
+ also want to run it from the command line once or twice to get
+ a feel for what it's doing.
+-.Sp
+-Here is an example crontab entry, assuming that backup levels \fBhourly\fR,
+-\&\fBdaily\fR, \fBweekly\fR and \fBmonthly\fR have been defined in \fB/etc/rsnapshot.conf\fR
++.PP
++Here is an example crontab entry, assuming that backup levels \fBalpha\fR,
++\&\fBbeta\fR, \fBgamma\fR and \fBdelta\fR have been defined in \fB/etc/rsnapshot.conf\fR
+ .Sp
+ .RS 4
+-\&\fB0 */4 * * *         /usr/local/bin/rsnapshot hourly\fR
++\&\fB0 */4 * * *         /usr/local/bin/rsnapshot alpha\fR
+ .Sp
+-\&\fB50 23 * * *         /usr/local/bin/rsnapshot daily\fR
++\&\fB50 23 * * *         /usr/local/bin/rsnapshot beta\fR
+ .Sp
+-\&\fB40 23 * * 6         /usr/local/bin/rsnapshot weekly\fR
++\&\fB40 23 * * 6         /usr/local/bin/rsnapshot gamma\fR
+ .Sp
+-\&\fB30 23 1 * *         /usr/local/bin/rsnapshot monthly\fR
++\&\fB30 23 1 * *         /usr/local/bin/rsnapshot delta\fR
+ .RE
+-.RE
+-.RS 4
+-.Sp
++.PP
+ This example will do the following:
+ .Sp
+ .RS 4
+-6 hourly backups a day (once every 4 hours, at 0,4,8,12,16,20)
++6 alpha backups a day (once every 4 hours, at 0,4,8,12,16,20)
+ .Sp
+-1 daily backup every day, at 11:50PM
++1 beta backup every day, at 11:50PM
+ .Sp
+-1 weekly backup every week, at 11:40PM, on Saturdays (6th day of week)
++1 gamma backup every week, at 11:40PM, on Saturdays (6th day of week)
+ .Sp
+-1 monthly backup every month, at 11:30PM on the 1st day of the month
++1 delta backup every month, at 11:30PM on the 1st day of the month
+ .RE
+-.RE
+-.RS 4
+-.Sp
++.PP
+ It is usually a good idea to schedule the larger backup levels to run a bit before the
+-lower ones. For example, in the crontab above, notice that \*(L"daily\*(R" runs 10 minutes
+-before \*(L"hourly\*(R".  The main reason for this is that the daily rotate will
+-pull out the oldest hourly and make that the youngest daily (which means
+-that the next hourly rotate will not need to delete the oldest hourly),
++lower ones. For example, in the crontab above, notice that \*(L"beta\*(R" runs 10 minutes
++before \*(L"alpha\*(R".  The main reason for this is that the beta rotate will
++pull out the oldest alpha and make that the youngest beta (which means
++that the next alpha rotate will not need to delete the oldest alpha),
+ which is more efficient.  A secondary reason is that it is harder to
+ predict how long the lowest backup level will take, since it needs to actually
+ do an rsync of the source as well as the rotate that all backups do.
+-.Sp
+-If rsnapshot takes longer than 10 minutes to do the \*(L"daily\*(R" rotate
+-(which usually includes deleting the oldest daily snapshot), then you
++.PP
++If rsnapshot takes longer than 10 minutes to do the \*(L"beta\*(R" rotate
++(which usually includes deleting the oldest beta snapshot), then you
+ should increase the time between the backup levels.
+ Otherwise (assuming you have set the \fBlockfile\fR parameter, as is recommended)
+-your hourly snapshot will fail sometimes because the daily still has the lock.  
+-.Sp
++your alpha snapshot will fail sometimes because the beta still has the lock.
++.PP
+ Remember that these are just the times that the program runs.
+ To set the number of backups stored, set the \fBretain\fR numbers in
+ \&\fB/etc/rsnapshot.conf\fR
+-.Sp
++.PP
+ To check the disk space used by rsnapshot, you can call it with the \*(L"du\*(R" argument.
+-.Sp
++.PP
+ For example:
+ .Sp
+ .RS 4
+ \&\fBrsnapshot du\fR
+ .RE
+-.RE
+-.RS 4
+-.Sp
++.PP
+ This will show you exactly how much disk space is taken up in the snapshot root. This
+ feature requires the \s-1UNIX\s0 \fBdu\fR command to be installed on your system, for it to
+ support the \*(L"\-csh\*(R" command line arguments, and to be in your path. You can also
+ override your path settings and the flags passed to du using the cmd_du and du_args
+ parameters.
+-.Sp
++.PP
+ It is also possible to pass a relative file path as a second argument, to get a report
+ on a particular file or subdirectory.
+ .Sp
+ .RS 4
+ \&\fBrsnapshot du localhost/home/\fR
+ .RE
+-.RE
+-.RS 4
+-.Sp
++.PP
+ The \s-1GNU\s0 version of \*(L"du\*(R" is preferred. The \s-1BSD\s0 version works well also, but does
+ not support the \-h flag (use \-k instead, to see the totals in kilobytes). Other
+ versions of \*(L"du\*(R", such as Solaris, may not work at all.
+-.Sp
++.PP
+ To check the differences between two directories, call rsnapshot with the \*(L"diff\*(R"
+ argument, followed by two backup levels or directory paths.
+-.Sp
++.PP
+ For example:
+ .Sp
+ .RS 4
+-\&\fBrsnapshot diff daily.0 daily.1\fR
++\&\fBrsnapshot diff beta.0 beta.1\fR
+ .Sp
+-\&\fBrsnapshot diff daily.0/localhost/etc daily.1/localhost/etc\fR
++\&\fBrsnapshot diff beta.0/localhost/etc beta.1/localhost/etc\fR
+ .Sp
+-\&\fBrsnapshot diff /.snapshots/daily.0 /.snapshots/daily.1\fR
+-.RE
++\&\fBrsnapshot diff /.snapshots/beta.0 /.snapshots/beta.1\fR
+ .RE
+-.RS 4
+-.Sp
++.PP
+ This will call the rsnapshot-diff program, which will scan both directories
+ looking for differences (based on hard links).
+-.Sp
++.PP
+ \&\fBrsnapshot sync\fR
+ .Sp
+ .RS 4
+@@ -909,13 +876,13 @@ argument, followed by the other usual cron entries. The sync should happen as
+ the lowest, most frequent backup level, and right before. For example:
+ .Sp
+ .RS 4
+-\&\fB0 */4 * * *         /usr/local/bin/rsnapshot sync && /usr/local/bin/rsnapshot hourly\fR
++\&\fB0 */4 * * *         /usr/local/bin/rsnapshot sync && /usr/local/bin/rsnapshot alpha\fR
+ .Sp
+-\&\fB50 23 * * *         /usr/local/bin/rsnapshot daily\fR
++\&\fB50 23 * * *         /usr/local/bin/rsnapshot beta\fR
+ .Sp
+-\&\fB40 23 1,8,15,22 * * /usr/local/bin/rsnapshot weekly\fR
++\&\fB40 23 1,8,15,22 * * /usr/local/bin/rsnapshot gamma\fR
+ .Sp
+-\&\fB30 23 1 * *         /usr/local/bin/rsnapshot monthly\fR
++\&\fB30 23 1 * *         /usr/local/bin/rsnapshot delta\fR
+ .RE
+ .RE
+ .RS 4
+@@ -923,9 +890,7 @@ the lowest, most frequent backup level, and right before. For example:
+ The sync operation simply runs rsync and all backup scripts. In this scenario, all
+ calls simply rotate directories, even the lowest backup level.
+ .RE
+-.RE
+-.RS 4
+-.Sp
++.PP
+ \&\fBrsnapshot sync [dest]\fR
+ .Sp
+ .RS 4
+@@ -948,8 +913,6 @@ It will \s-1NOT\s0 get any other backup points with slightly different values (l
+ example.com/etc/, for example). In order to sync example.com/etc, you would need to
+ run rsnapshot again, using example.com/etc as the optional parameter.
+ .RE
+-.RE
+-.RS 4
+ .SH "EXIT VALUES"
+ .IX Header "EXIT VALUES"
+ .RS 4
+@@ -959,8 +922,6 @@ run rsnapshot again, using example.com/etc as the optional parameter.
+ .Sp
+ \&\fB2\fR  Some warnings occurred, but the backup still finished
+ .RE
+-.RE
+-.RS 4
+ .SH "FILES"
+ .IX Header "FILES"
+ /etc/rsnapshot.conf
+@@ -973,40 +934,40 @@ Use the \fB\-t\fR flag to see what commands would have been executed. This will
+ you the commands rsnapshot would try to run. There are a few minor differences
+ (for example, not showing an attempt to remove the lockfile because it wasn't
+ really created in the test), but should give you a very good idea what will happen.
+-.Sp
++.PP
+ Using the \fB\-v\fR, \fB\-V\fR, and \fB\-D\fR flags will print increasingly more information
+ to \s-1STDOUT\s0.
+-.Sp
++.PP
+ Make sure you don't have spaces in the config file that you think are actually tabs.
+-.Sp
++.PP
+ Much other weird behavior can probably be attributed to plain old file system
+ permissions and ssh authentication issues.
+ .SH "BUGS"
+ .IX Header "BUGS"
+ Please report bugs (and other comments) to the rsnapshot-discuss mailing list:
+-.Sp
++.PP
+ \&\fBhttp://lists.sourceforge.net/lists/listinfo/rsnapshot\-discuss\fR
+ .SH "NOTES"
+ .IX Header "NOTES"
+ Make sure your /etc/rsnapshot.conf file has all elements separated by tabs.
+ See /etc/rsnapshot.conf.default for a working example file.
+-.Sp
++.PP
+ Make sure you put a trailing slash on the end of all directory references.
+ If you don't, you may have extra directories created in your snapshots.
+ For more information on how the trailing slash is handled, see the
+ \&\fB\f(BIrsync\fB\|(1)\fR manpage.
+-.Sp
++.PP
+ Make sure to make the snapshot directory chmod 700 and owned by root
+ (assuming backups are made by the root user). If the snapshot directory
+ is readable by other users, they will be able to modify the snapshots
+ containing their files, thus destroying the integrity of the snapshots.
+-.Sp
++.PP
+ If you would like regular users to be able to restore their own backups,
+ there are a number of ways this can be accomplished. One such scenario
+ would be:
+-.Sp
++.PP
+ Set \fBsnapshot_root\fR to \fB/.private/.snapshots\fR in \fB/etc/rsnapshot.conf\fR
+-.Sp
++.PP
+ Set the file permissions on these directories as follows:
+ .Sp
+ .RS 4
+@@ -1014,15 +975,13 @@ drwx\-\-\-\-\-\-    /.private
+ .Sp
+ drwxr-xr-x    /.private/.snapshots
+ .RE
+-.RE
+-.RS 4
+-.Sp
++.PP
+ Export the /.private/.snapshots directory over read-only \s-1NFS\s0, a read-only
+ Samba share, etc.
+-.Sp
++.PP
+ See the rsnapshot \s-1HOWTO\s0 for more information on making backups
+ accessible to non-privileged users.
+-.Sp
++.PP
+ For ssh to work unattended through cron, you will probably want to use
+ public key logins. Create an ssh key with no passphrase for root, and
+ install the public key on each machine you want to backup. If you are
+@@ -1032,11 +991,11 @@ on the machine just for backups. Give the user a different name such
+ as \*(L"rsnapshot\*(R", but keep the \s-1UID\s0 and \s-1GID\s0 set to 0, to give root
+ privileges. However, make logins more restrictive, either through ssh
+ configuration, or using an alternate shell.
+-.Sp
++.PP
+ \&\s-1BE\s0 \s-1CAREFUL\s0! If the private key is obtained by an attacker, they will
+ have free run of all the systems involved. If you are unclear on how
+ to do this, see \fB\f(BIssh\fB\|(1)\fR, \fB\f(BIsshd\fB\|(1)\fR, and \fB\f(BIssh\-keygen\fB\|(1)\fR.
+-.Sp
++.PP
+ Backup scripts are run as the same user that rsnapshot is running as.
+ Typically this is root. Make sure that all of your backup scripts are
+ only writable by root, and that they don't call any other programs
+@@ -1044,7 +1003,7 @@ that aren't owned by root. If you fail to do this, anyone who can
+ write to the backup script or any program it calls can fully take
+ over the machine. Of course, this is not a situation unique to
+ rsnapshot.
+-.Sp
++.PP
+ By default, rsync transfers are done using the \-\-numeric\-ids option.
+ This means that user names and group names are ignored during transfers,
+ but the \s-1UID/GID\s0 information is kept intact. The assumption is that the
+@@ -1054,25 +1013,23 @@ be unmanageable. If you are archiving snapshots with \s-1GNU\s0 tar, you may
+ want to use the \-\-numeric\-owner parameter. Also, keep a copy of the
+ archived system's /etc/passwd and /etc/group files handy for the \s-1UID/GID\s0
+ to name mapping.
+-.Sp
++.PP
+ If you remove backup points in the config file, the previously archived
+ files under those points will permanently stay in the snapshots directory
+ unless you remove the files yourself. If you want to conserve disk space,
+ you will need to go into the <snapshot_root> directory and manually
+ remove the files from the smallest backup level's \*(L".0\*(R" directory.
+-.Sp
++.PP
+ For example, if you were previously backing up /home/ with a destination
+-of localhost/, and hourly is your smallest backup level, you would need to do
++of localhost/, and alpha is your smallest backup level, you would need to do
+ the following to reclaim that disk space:
+ .Sp
+ .RS 4
+-rm \-rf <snapshot_root>/hourly.0/localhost/home/
+-.RE
++rm \-rf <snapshot_root>/alpha.0/localhost/home/
+ .RE
+-.RS 4
+-.Sp
++.PP
+ Please note that the other snapshots previously made of /home/ will still
+-be using that disk space, but since the files are flushed out of hourly.0/,
++be using that disk space, but since the files are flushed out of alpha.0/,
+ they will no longer be copied to the subsequent directories, and will thus
+ be removed in due time as the rotations happen.
+ .SH "AUTHORS"
+@@ -1080,30 +1037,24 @@ be removed in due time as the rotations happen.
+ Mike Rubel \- \fBhttp://www.mikerubel.org/computers/rsync_snapshots/\fR
+ .IP "\- Created the original shell scripts on which this project is based" 4
+ .IX Item "- Created the original shell scripts on which this project is based"
+-.RE
+-.RS 4
+-.Sp
++.PP
+ Nathan Rosenquist (\fBnathan@rsnapshot.org\fR)
+-.IP "\- Primary author and previous maintainer of rsnapshot." 4
+-.IX Item "- Primary author and previous maintainer of rsnapshot."
+-.RE
+-.RS 4
+-.Sp
++.IP "\- Primary author and original maintainer of rsnapshot." 4
++.IX Item "- Primary author and original maintainer of rsnapshot."
++.PP
+ David Cantrell (\fBdavid@cantrell.org.uk\fR)
+-.IP "\- Current co-maintainer of rsnapshot" 4
+-.IX Item "- Current co-maintainer of rsnapshot"
++.IP "\- Previous maintainer of rsnapshot" 4
++.IX Item "- Previous maintainer of rsnapshot"
+ .PD 0
+ .IP "\- Wrote the rsnapshot-diff utility" 4
+ .IX Item "- Wrote the rsnapshot-diff utility"
+ .IP "\- Improved how use_lazy_deletes work so slow deletes don't screw up the next backup at that backup level." 4
+ .IX Item "- Improved how use_lazy_deletes work so slow deletes don't screw up the next backup at that backup level."
+-.RE
+-.RS 4
+ .PD
+-.Sp
++.PP
+ David Keegel <djk@cybersource.com.au>
+-.IP "\- Co\-maintainer, with responsibility for release management since 1.2.9" 4
+-.IX Item "- Co-maintainer, with responsibility for release management since 1.2.9"
++.IP "\- Current rsnapshot maintainer" 4
++.IX Item "- Current rsnapshot maintainer"
+ .PD 0
+ .IP "\- Fixed race condition in lock file creation, improved error reporting" 4
+ .IX Item "- Fixed race condition in lock file creation, improved error reporting"
+@@ -1112,180 +1063,136 @@ David Keegel <djk@cybersource.com.au>
+ .IX Item "- Allowed remote ssh directory paths starting with ~/ as well as /"
+ .IP "\- Fixed a number of other bugs and buglets" 4
+ .IX Item "- Fixed a number of other bugs and buglets"
+-.RE
+-.RS 4
+ .PD
+-.Sp
++.PP
+ Carl Wilhelm Soderstrom \fB(chrome@real\-time.com)\fR
+ .IP "\- Created the \s-1RPM\s0 .spec file which allowed the \s-1RPM\s0 package to be built, among other things." 4
+ .IX Item "- Created the RPM .spec file which allowed the RPM package to be built, among other things."
+-.RE
+-.RS 4
+-.Sp
++.PP
+ Ted Zlatanov (\fBtzz@lifelogs.com\fR)
+ .IP "\- Added the one_fs feature, autoconf support, good advice, and much more." 4
+ .IX Item "- Added the one_fs feature, autoconf support, good advice, and much more."
+-.RE
+-.RS 4
+-.Sp
++.PP
+ Ralf van Dooren (\fBr.vdooren@snow.nl\fR)
+ .IP "\- Added and maintains the rsnapshot entry in the FreeBSD ports tree." 4
+ .IX Item "- Added and maintains the rsnapshot entry in the FreeBSD ports tree."
+-.RE
+-.RS 4
+-.Sp
++.PP
+ SlapAyoda
+ .IP "\- Provided access to his computer museum for software testing." 4
+ .IX Item "- Provided access to his computer museum for software testing."
+-.RE
+-.RS 4
+-.Sp
++.PP
+ Carl Boe (\fBboe@demog.berkeley.edu\fR)
+ .IP "\- Found several subtle bugs and provided fixes for them." 4
+ .IX Item "- Found several subtle bugs and provided fixes for them."
+-.RE
+-.RS 4
+-.Sp
++.PP
+ Shane Leibling (\fBshane@cryptio.net\fR)
+ .IP "\- Fixed a compatibility bug in utils/backup_smb_share.sh" 4
+ .IX Item "- Fixed a compatibility bug in utils/backup_smb_share.sh"
+-.RE
+-.RS 4
+-.Sp
++.PP
+ Christoph Wegscheider (\fBchristoph.wegscheider@wegi.net\fR)
+ .IP "\- Added (and previously maintained) the Debian rsnapshot package." 4
+ .IX Item "- Added (and previously maintained) the Debian rsnapshot package."
+-.RE
+-.RS 4
+-.Sp
++.PP
+ Bharat Mediratta (\fBbharat@menalto.com\fR)
+ .IP "\- Improved the exclusion rules to avoid backing up the snapshot root (among other things)." 4
+ .IX Item "- Improved the exclusion rules to avoid backing up the snapshot root (among other things)."
+-.RE
+-.RS 4
+-.Sp
++.PP
+ Peter Palfrader (\fBweasel@debian.org\fR)
+ .IP "\- Enhanced error reporting to include command line options." 4
+ .IX Item "- Enhanced error reporting to include command line options."
+-.RE
+-.RS 4
+-.Sp
++.PP
+ Nicolas Kaiser (\fBnikai@nikai.net\fR)
+ .IP "\- Fixed typos in program and man page" 4
+ .IX Item "- Fixed typos in program and man page"
+-.RE
+-.RS 4
+-.Sp
++.PP
+ Chris Petersen \- (\fBhttp://www.forevermore.net/\fR)
+ .Sp
+ .RS 4
+ Added cwrsync permanent-share support
+ .RE
+-.RE
+-.RS 4
+-.Sp
++.PP
+ Robert Jackson (\fBRobertJ@promedicalinc.com\fR)
+ .Sp
+ .RS 4
+ Added use_lazy_deletes feature
+ .RE
+-.RE
+-.RS 4
+-.Sp
++.PP
+ Justin Grote (\fBjustin@grote.name\fR)
+ .Sp
+ .RS 4
+ Improved rsync error reporting code
+ .RE
+-.RE
+-.RS 4
+-.Sp
++.PP
+ Anthony Ettinger (\fBapwebdesign@yahoo.com\fR)
+ .Sp
+ .RS 4
+ Wrote the utils/mysqlbackup.pl script
+ .RE
+-.RE
+-.RS 4
+-.Sp
++.PP
+ Sherman Boyd
+ .Sp
+ .RS 4
+ Wrote utils/random_file_verify.sh script
+ .RE
+-.RE
+-.RS 4
+-.Sp
++.PP
+ William Bear (\fBbear@umn.edu\fR)
+ .Sp
+ .RS 4
+ Wrote the utils/rsnapreport.pl script (pretty summary of rsync stats)
+ .RE
+-.RE
+-.RS 4
+-.Sp
++.PP
+ Eric Anderson (\fBanderson@centtech.com\fR)
+ .Sp
+ .RS 4
+ Improvements to utils/rsnapreport.pl.
+ .RE
+-.RE
+-.RS 4
+-.Sp
++.PP
+ Alan Batie (\fBalan@batie.org\fR)
+ .Sp
+ .RS 4
+ Bug fixes for include_conf
+ .RE
+-.RE
+-.RS 4
+-.Sp
++.PP
+ Dieter Bloms (\fBdieter@bloms.de\fR)
+ .Sp
+ .RS 4
+ Multi-line configuration options
+ .RE
+-.RE
+-.RS 4
+-.Sp
++.PP
+ Henning Moll (\fBnewsScott@gmx.de\fR)
+ .Sp
+ .RS 4
+ stop_on_stale_lockfile
+ .RE
+-.RE
+-.RS 4
+-.Sp
++.PP
+ Ben Low (\fBben@bdlow.net\fR)
+ .Sp
+ .RS 4
+ Linux \s-1LVM\s0 snapshot support
+ .RE
+-.RE
+-.RS 4
+ .SH "COPYRIGHT"
+ .IX Header "COPYRIGHT"
+ Copyright (C) 2003\-2005 Nathan Rosenquist
+-.Sp
++.PP
+ Portions Copyright (C) 2002\-2007 Mike Rubel, Carl Wilhelm Soderstrom,
+ Ted Zlatanov, Carl Boe, Shane Liebling, Bharat Mediratta, Peter Palfrader,
+ Nicolas Kaiser, David Cantrell, Chris Petersen, Robert Jackson, Justin Grote,
+ David Keegel, Alan Batie, Dieter Bloms, Henning Moll, Ben Low, Anthony
+ Ettinger
+-.Sp
++.PP
+ This man page is distributed under the same license as rsnapshot:
+ the \s-1GPL\s0 (see below).
+-.Sp
++.PP
+ This program is free software; you can redistribute it and/or modify
+ it under the terms of the \s-1GNU\s0 General Public License as published by
+ the Free Software Foundation; either version 2 of the License, or
+ (at your option) any later version.
+-.Sp
++.PP
+ This program is distributed in the hope that it will be useful,
+ but \s-1WITHOUT\s0 \s-1ANY\s0 \s-1WARRANTY\s0; without even the implied warranty of
+ \&\s-1MERCHANTABILITY\s0 or \s-1FITNESS\s0 \s-1FOR\s0 A \s-1PARTICULAR\s0 \s-1PURPOSE\s0.  See the
+ \&\s-1GNU\s0 General Public License for more details.
+-.Sp
++.PP
+ You should have received a copy of the \s-1GNU\s0 General Public License along
+ with this program; if not, write to the Free Software Foundation, Inc.,
+ 51 Franklin Street, Fifth Floor, Boston, \s-1MA\s0  02110\-1301 \s-1USA\s0
+diff --git a/rsnapshot.conf.default.in b/rsnapshot.conf.default.in
+index c2d86bf..2379763 100644
+--- a/rsnapshot.conf.default.in
++++ b/rsnapshot.conf.default.in
+@@ -2,14 +2,10 @@
+ # rsnapshot.conf - rsnapshot configuration file #
+ #################################################
+ #                                               #
+-# PLEASE BE AWARE OF THE FOLLOWING RULES:       #
++# PLEASE BE AWARE OF THE FOLLOWING RULE:        #
+ #                                               #
+ # This file requires tabs between elements      #
+ #                                               #
+-# Directories require a trailing slash:         #
+-#   right: /home/                               #
+-#   wrong: /home                                #
+-#                                               #
+ #################################################
+ 
+ #######################
+@@ -81,15 +77,15 @@ snapshot_root	/.snapshots/
+ #cmd_postexec	/path/to/postexec/script
+ 
+ #########################################
+-#           BACKUP INTERVALS            #
++#     BACKUP LEVELS / INTERVALS         #
+ # Must be unique and in ascending order #
+-# i.e. hourly, daily, weekly, etc.      #
++# e.g. alpha, beta, gamma, etc.         #
+ #########################################
+ 
+-interval	hourly	6
+-interval	daily	7
+-interval	weekly	4
+-#interval	monthly	3
++retain	alpha	6
++retain	beta	7
++retain	gamma	4
++#retain	delta	3
+ 
+ ############################################
+ #              GLOBAL OPTIONS              #
+@@ -160,7 +156,7 @@ lockfile	/var/run/rsnapshot.pid
+ #include_file	/path/to/include/file
+ #exclude_file	/path/to/exclude/file
+ 
+-# If your version of rsync supports --link-dest, consider enable this.
++# If your version of rsync supports --link-dest, consider enabling this.
+ # This is the best way to support special files (FIFOs, etc) cross-platform.
+ # The default is 0 (off).
+ #
+@@ -168,7 +164,7 @@ lockfile	/var/run/rsnapshot.pid
+ 
+ # When sync_first is enabled, it changes the default behaviour of rsnapshot.
+ # Normally, when rsnapshot is called with its lowest interval
+-# (i.e.: "rsnapshot hourly"), it will sync files AND rotate the lowest
++# (i.e.: "rsnapshot alpha"), it will sync files AND rotate the lowest
+ # intervals. With sync_first enabled, "rsnapshot sync" handles the file sync,
+ # and all interval calls simply rotate files. See the man page for more
+ # details. The default is 0 (off).
+@@ -182,9 +178,9 @@ lockfile	/var/run/rsnapshot.pid
+ #use_lazy_deletes	0
+ 
+ # Number of rsync re-tries. If you experience any network problems or
+-# network card issues that tend to cause ssh to crap-out with
+-# "Corrupted MAC on input" errors, for example, set this to a non-zero
+-# value to have the rsync operation re-tried
++# network card issues that tend to cause ssh to fail with errors like
++# "Corrupted MAC on input", for example, set this to a non-zero value
++# to have the rsync operation re-tried.
+ #
+ #rsync_numtries 0
+ 
+@@ -208,7 +204,7 @@ backup	/usr/local/	localhost/
+ #backup	root@example.com:/etc/	example.com/	exclude=mtab,exclude=core
+ #backup_script	ssh root@example.com "mysqldump -A > /var/db/dump/mysql.sql"	unused2
+ #backup	root@example.com:/var/db/dump/	example.com/
+-#backup_script	/bin/date	"+ backup of example.com ended at %c"	unused9
++#backup_script	/bin/date "+ backup of example.com ended at %c"	unused9
+ 
+ # CVS.SOURCEFORGE.NET
+ #backup_script	/usr/local/bin/backup_rsnapshot_cvsroot.sh	rsnapshot.cvs.sourceforge.net/
+diff --git a/t/link-dest_-t_when_only_one_snapshot.t.in b/t/link-dest_-t_when_only_one_snapshot.t.in
+new file mode 100644
+index 0000000..43a8332
+--- /dev/null
++++ b/t/link-dest_-t_when_only_one_snapshot.t.in
+@@ -0,0 +1,28 @@
++#!/usr/bin/perl -w
++
++use strict;
++use Test::More tests => 5;
++
++my $snap_root="t/support/snapshots/link-dest_t";
++
++# Make sure snap_root directory does not exist before we start 
++ok(! -d "$snap_root" || ! `rm -rf "$snap_root"`,
++	" snapshot root does not exist before testing starts");
++
++ok(! `@PERL@ ./rsnapshot -c t/support/etc/link-dest_-t_when_only_one_snapshot.conf daily`,
++	" first rsnapshot ran");
++
++ok(-d "$snap_root/daily.0" && ! -d "$snap_root/daily.1",
++	" daily.0 exists but daily.1 does not");
++
++my $output=`@PERL@ ./rsnapshot -c t/support/etc/link-dest_-t_when_only_one_snapshot.conf -t daily`;
++
++open(TMP,">>/tmp/test_output");
++print TMP "output=$output\n";
++close(TMP);
++
++ok($output =~ / --link-dest=/,
++	" link-dest is used");
++
++ok(! `rm -rf "$snap_root"`,
++	" Removed snapshot root to clean up");
+diff --git a/t/snapshot_root_with_space.t.in b/t/snapshot_root_with_space.t.in
+new file mode 100644
+index 0000000..7178dbf
+--- /dev/null
++++ b/t/snapshot_root_with_space.t.in
+@@ -0,0 +1,20 @@
++#!/usr/bin/perl -w
++
++use strict;
++use Test::More tests => 5;
++
++my $snap_root="t/support/snapshot root";
++
++# Make sure snap_root directory does not exist before we start 
++ok(! -d "$snap_root" || ! `rm -rf "$snap_root"`,
++	" snapshot root does not exist before testing starts");
++
++ok(! `@PERL@ ./rsnapshot -c t/support/etc/snapshot_root_with_space.conf hourly`,
++	" first rsnapshot ran");
++ok(! `@PERL@ ./rsnapshot -c t/support/etc/snapshot_root_with_space.conf hourly`,
++	" second rsnapshot ran");
++ok(-d "$snap_root/hourly.0" && -d "$snap_root/hourly.1",
++	" hourly.0 and hourly.1 directories exist afterward");
++
++ok(! `rm -rf "$snap_root"`,
++	" Removed snapshot root to clean up");
+diff --git a/t/support/etc/link-dest_-t_when_only_one_snapshot.conf.in b/t/support/etc/link-dest_-t_when_only_one_snapshot.conf.in
+new file mode 100644
+index 0000000..35f2500
+--- /dev/null
++++ b/t/support/etc/link-dest_-t_when_only_one_snapshot.conf.in
+@@ -0,0 +1,6 @@
++config_version	1.2
++snapshot_root	@CWD@/t/support/snapshots/link-dest_t
++cmd_rsync	@RSYNC@
++link_dest	1
++interval	daily	7
++backup	@CWD@/t/support/etc/link-dest_-t_when_only_one_snapshot.conf	link_dest
+diff --git a/t/support/etc/snapshot_root_with_space.conf.in b/t/support/etc/snapshot_root_with_space.conf.in
+new file mode 100644
+index 0000000..d464ae9
+--- /dev/null
++++ b/t/support/etc/snapshot_root_with_space.conf.in
+@@ -0,0 +1,5 @@
++config_version	1.2
++snapshot_root	@CWD@/t/support/snapshot root/
++cmd_rsync		@RSYNC@
++interval		hourly	6
++backup			@CWD@/t/support/etc/snapshot_root_with_space.conf	localhost/
+diff --git a/utils/rsnapshot-copy b/utils/rsnapshot-copy
+index be9801e..2c10f3d 100644
+--- a/utils/rsnapshot-copy
++++ b/utils/rsnapshot-copy
+@@ -62,7 +62,7 @@ dest="${@: -1:1}"
+ do_cmd rsync "${rsync_opts[@]}" --exclude=* "$src/" "$dest/"
+ 
+ # Obtain a list of snapshot names in newest to oldest order.
+-# List the src -> filter to `2008/04/09T17:59:43 hourly.0' format
++# List the src -> filter to `2008/04/09T17:59:43 alpha.0' format
+ # -> sort newest to oldest -> read each line, ignoring the time.
+ rsync "${rsync_opts[@]}" --list-only --no-r -d --no-l "$src/" \
+ 	| sed -nre 's,^d[^ ]+ +[^ ]+ (..../../..) (..:..:..) (.*\.[0-9]+)$,\1T\2 \3,p' \
