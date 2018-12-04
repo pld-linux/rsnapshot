@@ -1,0 +1,11 @@
+--- rsnapshot-1.4.2/rsnapshot-program.pl~	2015-12-12 00:55:44.000000000 +0100
++++ rsnapshot-1.4.2/rsnapshot-program.pl	2018-12-04 11:41:44.825674546 +0100
+@@ -2257,7 +2257,7 @@ sub log_msg {
+ 				exit(1);
+ 			}
+ 
+-			print LOG '[', get_current_date(), '] ', $str, "\n";
++			print LOG '[', get_current_date(), '][', $$, '] ', $str, "\n";
+ 
+ 			$result = close(LOG);
+ 			if (!defined($result)) {
