@@ -1,3 +1,4 @@
+%bcond_without	tests
 %include	/usr/lib/rpm/macros.perl
 Summary:	Program for efficient remote updates of backup sets
 Summary(pl.UTF-8):	Program do wydajnego zdalnego uaktualniania zbiorów kopii zapasowych
@@ -29,8 +30,10 @@ w oparciu o rsynca.
 
 %build
 %configure \
-	RSYNC=rsync
+	RSYNC=%{_bindir}/rsync
 %{__make}
+
+%{?with_tests:%{__make} test}
 
 %install
 rm -rf $RPM_BUILD_ROOT
