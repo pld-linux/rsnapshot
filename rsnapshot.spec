@@ -1,5 +1,4 @@
 %bcond_without	tests
-%include	/usr/lib/rpm/macros.perl
 Summary:	Program for efficient remote updates of backup sets
 Summary(pl.UTF-8):	Program do wydajnego zdalnego uaktualniania zbiorów kopii zapasowych
 Name:		rsnapshot
