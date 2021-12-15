@@ -2,17 +2,18 @@
 Summary:	Program for efficient remote updates of backup sets
 Summary(pl.UTF-8):	Program do wydajnego zdalnego uaktualniania zbiorów kopii zapasowych
 Name:		rsnapshot
-Version:	1.4.2
-Release:	2
+Version:	1.4.4
+Release:	1
 License:	GPL v2+
 Group:		Daemons
 Source0:	http://www.rsnapshot.org/downloads/%{name}-%{version}.tar.gz
-# Source0-md5:	860382f19e38fc649f9447397b54e442
-Patch0:		bug-207.patch
+# Source0-md5:	86717b9f39c7a7a5dd9e0eba556f829e
+
 Patch1:		pid.patch
 URL:		http://www.rsnapshot.org/
 BuildRequires:	rpm-perlprov
 Requires:	rsync
+BuildArch:	noarch
 BuildRoot:	%{tmpdir}/%{name}-%{version}-root-%(id -u -n)
 
 %description
@@ -24,7 +25,7 @@ w oparciu o rsynca.
 
 %prep
 %setup -q
-%patch0 -p1
+
 %patch1 -p1
 
 %build
